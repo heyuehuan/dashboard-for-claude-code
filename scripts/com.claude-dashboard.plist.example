@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd agent — auto-refresh dashboard data every 5 min.
+
+  Setup:
+    1. Copy to ~/Library/LaunchAgents/com.claude-dashboard.plist
+    2. Replace __PROJECT_DIR__ with the absolute path to this repo
+       (e.g. /Users/you/projects/claude-code-dashboard)
+    3. launchctl load ~/Library/LaunchAgents/com.claude-dashboard.plist
+
+  Unload:   launchctl unload ~/Library/LaunchAgents/com.claude-dashboard.plist
+  Status:   launchctl list | grep claude-dashboard
+  Trigger:  launchctl kickstart -k gui/$(id -u)/com.claude-dashboard
+  Logs:     tail -f __PROJECT_DIR__/logs/refresh.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude-dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_DIR__/scripts/refresh.sh</string>
+    </array>
+
+    <!-- Fire every 5 minutes (300 s) -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- Also run once immediately on load -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_DIR__/logs/launchd-err.log</string>
+</dict>
+</plist>

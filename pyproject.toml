@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dashboard-for-claude-code"
+version = "0.1.0"
+description = "A local, read-only dashboard that analyzes your Claude Code session logs — usage, cost, tokens, tools, and activity."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "The dashboard-for-claude-code contributors" }]
+keywords = ["claude-code", "dashboard", "analytics", "usage", "tokens", "cost", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.urls]
+Homepage = "https://github.com/heyuehuan/dashboard-for-claude-code"
+Repository = "https://github.com/heyuehuan/dashboard-for-claude-code"
+Issues = "https://github.com/heyuehuan/dashboard-for-claude-code/issues"
+
+[project.scripts]
+dashboard-for-claude-code = "claude_dashboard.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_dashboard"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.8",
+]
+# Security tooling is isolated in its own group so a plain `uv sync` (used to just
+# run the app) stays runtime-only. CI and contributors opt in via `--group security`.
+security = [
+    "bandit>=1.7",
+]
+
+[tool.uv]
+# `uv sync` installs runtime dependencies only, so running the dashboard from a
+# source checkout stays lean. Contributors install the full toolchain with
+# `uv sync --all-groups` (see CONTRIBUTING.md).
+default-groups = []
+
+[tool.ruff]
+# Lint the package, scripts, and tests alike. Default rule set (pyflakes +
+# core pycodestyle errors); style beyond that is left to reviewers.
+src = ["src"]
+extend-exclude = ["src/claude_dashboard/static"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts adjust sys.path before importing the package.
+"scripts/*" = ["E402"]
+"tests/*" = ["E402"]
+
+[tool.bandit]
+# SAST scan targets src + scripts; tests use asserts/temp files that bandit
+# flags by design, so they're excluded.
+exclude_dirs = ["tests", ".venv"]
