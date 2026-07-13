@@ -302,6 +302,7 @@ class Store:
             s = settings.get(d.get("project_path") or "", {})
             if s.get("display_name"):
                 d["project_name"] = s["display_name"]
+            d["hidden"] = bool(s.get("hidden", False))
             d["summary"] = summaries.get(d["session_id"])
             result.append(d)
         return result
@@ -324,6 +325,7 @@ class Store:
             s = settings.get(d.get("project_path") or "", {})
             if s.get("display_name"):
                 d["project_name"] = s["display_name"]
+            d["hidden"] = bool(s.get("hidden", False))
             d["summary"] = summaries.get(d["session_id"])
             result.append(d)
         return result
