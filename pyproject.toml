@@ -43,7 +43,7 @@ packages = ["src/claude_dashboard"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
+    "pytest>=9.1.1",
     "httpx>=0.27",
     "ruff>=0.8",
 ]
