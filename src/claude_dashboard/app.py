@@ -96,8 +96,8 @@ async def security_middleware(request: Request, call_next):
     if _AUTH_TOKEN:
         # Allow the login page (GET /) and static assets even without auth,
         # so the browser can render the 401 page gracefully.
-        skip = request.url.path in ("/", "/overview", "/projects", "/sessions", "/settings",
-                                    "/api/login") \
+        skip = request.url.path in ("/", "/overview", "/projects", "/sessions", "/calendar",
+                                    "/settings", "/api/login") \
                or request.url.path.startswith("/static/")
         if not skip:
             bearer = request.headers.get("Authorization", "")
@@ -257,6 +257,7 @@ app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 @app.get("/overview")
 @app.get("/projects")
 @app.get("/sessions")
+@app.get("/calendar")
 @app.get("/settings")
 def index():
     return FileResponse(str(_STATIC / "index.html"))

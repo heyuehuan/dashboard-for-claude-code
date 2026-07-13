@@ -246,7 +246,7 @@ let _sortState = {};
 
 function showTab(name, _pushUrl = true) {
   document.querySelectorAll(".tab").forEach((t, i) => {
-    const names = ["overview", "projects", "sessions", "settings"];
+    const names = ["overview", "projects", "sessions", "calendar", "settings"];
     t.classList.toggle("active", names[i] === name);
   });
   document
@@ -262,6 +262,7 @@ function showTab(name, _pushUrl = true) {
   if (name === "overview" && !_summaryData) loadOverview();
   if (name === "projects" && !_projectsData) loadProjects();
   if (name === "sessions" && !_sessionsData) loadSessions();
+  if (name === "calendar") loadCalendar();
   if (name === "settings") loadSettings();
 }
 
@@ -274,7 +275,7 @@ function goAllSessions() {
 function navigateFromUrl(replaceState = true) {
   const path = window.location.pathname.replace(/^\/+/, "") || "overview";
   const params = new URLSearchParams(window.location.search);
-  const validTabs = ["overview", "projects", "sessions", "settings"];
+  const validTabs = ["overview", "projects", "sessions", "calendar", "settings"];
   const tab = validTabs.includes(path) ? path : "overview";
 
   if (replaceState) {
@@ -534,6 +535,7 @@ function renderSettings(projects, settings, readOnly = false) {
           ${projects.length} projects &middot; ${hiddenCount} hidden
         </p>
       </div>
+      ${readOnly ? "" : `<button class="save-btn save-all-btn" onclick="saveAllProjectSettings(this)">Save All</button>`}
     </div>
     <div class="table-wrap">
       <table id="tbl-settings">
@@ -570,10 +572,66 @@ async function saveProjectSetting(btn, projectPath) {
     // invalidate caches so tabs reload with new settings
     _summaryData = null;
     _projectsData = null;
+    _sessionsData = null;
     destroyCharts();
   } catch (e) {
     showToast("Save failed: " + e.message);
     btn.textContent = "Save";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveAllProjectSettings(btn) {
+  const rows = [...document.querySelectorAll("#tbl-settings tbody tr")];
+  const payloads = rows
+    .map((row) => {
+      const nameInput = row.querySelector(".settings-name-input");
+      const hiddenChk = row.querySelector(".settings-hidden-chk");
+      if (!nameInput || !hiddenChk) return null;
+      return {
+        row,
+        hidden: hiddenChk.checked,
+        body: {
+          project_path: nameInput.dataset.path,
+          display_name: nameInput.value.trim() || null,
+          hidden: hiddenChk.checked,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  if (!payloads.length) return;
+
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "Saving…";
+  try {
+    await Promise.all(
+      payloads.map((p) =>
+        fetchJSON("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(p.body),
+        }),
+      ),
+    );
+    for (const p of payloads)
+      p.row.classList.toggle("settings-row-hidden", p.hidden);
+    btn.textContent = "Saved";
+    btn.classList.add("save-btn-ok");
+    setTimeout(() => {
+      btn.textContent = label;
+      btn.classList.remove("save-btn-ok");
+    }, 1500);
+    // invalidate caches so tabs reload with new settings
+    _summaryData = null;
+    _projectsData = null;
+    _sessionsData = null;
+    destroyCharts();
+  } catch (e) {
+    showToast("Save failed: " + e.message);
+    btn.textContent = label;
   } finally {
     btn.disabled = false;
   }
@@ -1703,6 +1761,688 @@ function closeModal(e) {
   if (!e || e.target === document.getElementById("modalOverlay")) {
     document.getElementById("modalOverlay").classList.remove("open");
   }
+}
+
+// ── Calendar (week view) ─────────────────────────────────────────────────────
+// A Google-Calendar-style week grid. Each session is a positioned block: x =
+// day, y = start time, height = wall duration. Blocks reuse the project-tag
+// colour (small per-project lightness shade within a tag) and open the same
+// session-detail modal on click. Sessions crossing midnight are split per day.
+
+const CAL_HOUR_H = 44; // px per hour row; also set as --cal-hour-h on .cal (CSS gridlines)
+const CAL_MIN_BLOCK_H = 15; // px — keep tiny sessions clickable
+// Time span occupied by a min-height block. Lane packing uses this so short
+// sessions that render taller than their true duration don't visually collide.
+const CAL_MIN_MS = (CAL_MIN_BLOCK_H / CAL_HOUR_H) * 3600000;
+let _calWeekStart = null; // local Monday 00:00 of the shown week
+let _calById = {}; // session_id → session, for tooltip/labels
+const CAL_HIDDEN_KEY = "cal_hidden_projects";
+// project_name keys hidden from the calendar ("" = untagged); persisted so the
+// view filter survives reloads.
+let _calHidden = _loadCalHidden();
+
+function _loadCalHidden() {
+  try {
+    const raw = localStorage.getItem(CAL_HIDDEN_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function _saveCalHidden() {
+  try {
+    localStorage.setItem(CAL_HIDDEN_KEY, JSON.stringify([..._calHidden]));
+  } catch {
+    /* storage unavailable (private mode / quota) — filter stays in-memory */
+  }
+}
+
+function _weekStart(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const dow = (x.getDay() + 6) % 7; // 0 = Monday
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+
+async function loadCalendar() {
+  if (!_sessionsData) {
+    try {
+      _sessionsData = await fetchJSON(dataUrl("sessions"));
+    } catch (e) {
+      document.getElementById("calGridWrap").innerHTML =
+        `<p class="muted">Error: ${e.message}</p>`;
+      return;
+    }
+  }
+  _calById = {};
+  for (const s of _sessionsData) _calById[s.session_id] = s;
+  if (!_calWeekStart) {
+    // Open on the week of the most recent session so the view is populated.
+    let latest = 0;
+    for (const s of _sessionsData) {
+      const t = new Date(s.ended_at || s.started_at || 0).getTime();
+      if (t > latest) latest = t;
+    }
+    _calWeekStart = _weekStart(latest ? new Date(latest) : new Date());
+  }
+  renderCalendar();
+}
+
+function calShiftWeek(delta) {
+  _calWeekStart = _calWeekStart || _weekStart(new Date());
+  const x = new Date(_calWeekStart);
+  x.setDate(x.getDate() + 7 * delta);
+  _calWeekStart = x;
+  renderCalendar();
+}
+
+function calGoToday() {
+  _calWeekStart = _weekStart(new Date());
+  renderCalendar();
+}
+
+// ── Week picker (month overlay) ──────────────────────────────────────────────
+// A styled month grid for jumping to any week. Each cell shows the day number
+// and, below it, how many sessions were active that day; picking a date shows
+// the week that contains it. The whole target week highlights on hover so it
+// reads as a week selector, not a day selector.
+let _calDpMonth = null; // Date at local midnight of the 1st of the shown month
+
+function calOpenDatePicker() {
+  const base = _calWeekStart || _weekStart(new Date());
+  _calDpMonth = new Date(base.getFullYear(), base.getMonth(), 1);
+  _renderDatePicker();
+  document.getElementById("calDpOverlay").classList.add("open");
+  document.addEventListener("keydown", _calDpKey);
+}
+
+function calCloseDatePicker() {
+  document.getElementById("calDpOverlay").classList.remove("open");
+  document.removeEventListener("keydown", _calDpKey);
+}
+
+function calDpBgClose(e) {
+  if (e.target === document.getElementById("calDpOverlay")) calCloseDatePicker();
+}
+
+function _calDpKey(e) {
+  if (e.key === "Escape") calCloseDatePicker();
+  else if (e.key === "ArrowLeft") calDpShiftMonth(-1);
+  else if (e.key === "ArrowRight") calDpShiftMonth(1);
+}
+
+function calDpShiftMonth(delta) {
+  _calDpMonth = new Date(
+    _calDpMonth.getFullYear(),
+    _calDpMonth.getMonth() + delta,
+    1,
+  );
+  _renderDatePicker();
+}
+
+function calPickDate(ms) {
+  _calWeekStart = _weekStart(new Date(ms));
+  calCloseDatePicker();
+  renderCalendar();
+}
+
+// Session counts per grid day: one pass over sessions, counting a session on
+// every day its [start,end] span touches. Respects Settings-hidden but not the
+// transient view filter, so the picker is a stable map of where activity is.
+function _calDayCounts(dayMs) {
+  const n = dayMs.length - 1;
+  const counts = new Array(n).fill(0);
+  const gridStart = dayMs[0];
+  const gridEnd = dayMs[n];
+  for (const s of _sessionsData || []) {
+    if (s.hidden) continue;
+    const st = new Date(s.started_at || s.ended_at || 0).getTime();
+    let en = new Date(s.ended_at || s.started_at || 0).getTime();
+    if (en < st) en = st;
+    if (en <= gridStart || st >= gridEnd) continue;
+    for (let i = 0; i < n; i++) {
+      if (dayMs[i] >= en) break; // no later day can intersect
+      if (dayMs[i + 1] <= st) continue; // day ends before the session starts
+      counts[i]++;
+    }
+  }
+  return counts;
+}
+
+function _renderDatePicker() {
+  const title = document.getElementById("calDpTitle");
+  const wd = document.getElementById("calDpWeekdays");
+  const grid = document.getElementById("calDpGrid");
+  if (!title || !wd || !grid) return;
+
+  title.textContent = _calDpMonth.toLocaleString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+  wd.innerHTML = _CAL_DOW.map((d) => `<span>${d}</span>`).join("");
+
+  // Grid starts on the Monday on/before the 1st, and runs 6 weeks (42 cells).
+  const gridStart = _weekStart(_calDpMonth);
+  const dayMs = [];
+  for (let i = 0; i <= 42; i++) {
+    const d = new Date(gridStart);
+    d.setDate(d.getDate() + i);
+    dayMs.push(d.getTime());
+  }
+  const counts = _calDayCounts(dayMs);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const selWeekMs = (_calWeekStart || _weekStart(new Date())).getTime();
+  const month = _calDpMonth.getMonth();
+
+  let html = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(dayMs[i]);
+    const isOut = d.getMonth() !== month;
+    const isToday = dayMs[i] === todayMs;
+    const inWeek = _weekStart(d).getTime() === selWeekMs;
+    const c = counts[i];
+    const cls =
+      "cal-dp-day" +
+      (isOut ? " is-out" : "") +
+      (isToday ? " is-today" : "") +
+      (inWeek ? " in-week" : "") +
+      (c ? " has-activity" : "");
+    const row = Math.floor(i / 7);
+    html += `<button class="${cls}" onclick="calPickDate(${dayMs[i]})" onmouseenter="calDpHoverWeek(${row})">
+      <span class="cal-dp-num">${d.getDate()}</span>
+      <span class="cal-dp-count${c ? "" : " is-zero"}">${c || 0}</span>
+    </button>`;
+  }
+  grid.innerHTML = html;
+}
+
+function calDpHoverWeek(row) {
+  const grid = document.getElementById("calDpGrid");
+  if (!grid) return;
+  [...grid.children].forEach((c, i) =>
+    c.classList.toggle("wk-hover", row >= 0 && Math.floor(i / 7) === row),
+  );
+}
+
+function renderCalendar() {
+  const wrap = document.getElementById("calGridWrap");
+  if (!wrap) return;
+  const weekStart = _calWeekStart;
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+
+  // Range label + hours + legend.
+  _renderCalHeader(weekStart, weekEnd);
+
+  // Build per-day segments (sessions clipped to each day, cross-midnight split).
+  // One pass over all sessions (not 7): each session out of the visible week is
+  // skipped in O(1), and only its overlapping day columns receive a segment.
+  const weekStartMs = weekStart.getTime();
+  const weekEndMs = weekEnd.getTime();
+  const days = [];
+  for (let d = 0; d < 7; d++) {
+    const dayStart = new Date(weekStart);
+    dayStart.setDate(dayStart.getDate() + d);
+    days.push({ dayStart, dayStartMs: dayStart.getTime(), segs: [] });
+  }
+  const tagsSeen = new Map(); // colour key → { color, label }; matches block colour key
+  let weekMs = 0;
+  const spans = []; // [start,end] segments, for wall-clock (non-overlapping) total
+  for (const s of _sessionsData) {
+    if (s.hidden) continue; // hidden in Settings → never on the calendar
+    if (_calHidden.has(s.project_name || "")) continue; // per-view filter
+    const st = new Date(s.started_at || s.ended_at || 0).getTime();
+    let en = new Date(s.ended_at || s.started_at || 0).getTime();
+    if (en < st) en = st;
+    if (en <= weekStartMs || st >= weekEndMs) continue; // outside this week
+    // Legend/colour key is the same one blocks use (tag, or full project name
+    // when untagged), so every legend swatch matches its blocks exactly.
+    const { tag } = parseTag(s.project_name || "");
+    const key = tag || s.project_name || "?";
+    if (!tagsSeen.has(key))
+      tagsSeen.set(key, { color: tagColor(key), label: tag || s.project_name || "untagged" });
+    for (const day of days) {
+      const dayEndMs = day.dayStartMs + 86400000;
+      const a = Math.max(st, day.dayStartMs);
+      const b = Math.min(en, dayEndMs);
+      if (b <= a) continue;
+      day.segs.push({ s, start: a, end: b, top: a - day.dayStartMs });
+      weekMs += b - a;
+      spans.push([a, b]);
+    }
+  }
+  for (const day of days) {
+    day.segs.sort((x, y) => x.start - y.start || y.end - x.end);
+    _packLanes(day.segs);
+    _mergeRuns(day.segs);
+  }
+
+  // Wall-clock hours: merge overlapping spans so concurrent sessions count once
+  // (capped at 7×24 = 168h by construction, since spans are clipped to the week).
+  let wallMs = 0;
+  spans.sort((x, y) => x[0] - y[0]);
+  let curStart = -1;
+  let curEnd = -1;
+  for (const [a, b] of spans) {
+    if (a > curEnd) {
+      if (curEnd > curStart) wallMs += curEnd - curStart;
+      curStart = a;
+      curEnd = b;
+    } else if (b > curEnd) {
+      curEnd = b;
+    }
+  }
+  if (curEnd > curStart) wallMs += curEnd - curStart;
+
+  const hEl = document.getElementById("calHours");
+  hEl.textContent = "";
+  hEl.append(
+    (weekMs / 3600000).toFixed(1) + "h agent hours this week",
+  );
+  const wall = document.createElement("span");
+  wall.className = "cal-hours-wall";
+  wall.title = "Wall-clock time with at least one active session (concurrent sessions counted once, capped at 168h/week)";
+  wall.textContent = " · " + (wallMs / 3600000).toFixed(1) + "h wall clock";
+  hEl.append(wall);
+  _renderCalLegend(tagsSeen);
+
+  // Hour gutter labels.
+  let gutter = '<div class="cal-gutter">';
+  for (let h = 0; h < 24; h++) {
+    gutter += `<div class="cal-hour" style="top:${h * CAL_HOUR_H}px">${_calHourLabel(h)}</div>`;
+  }
+  gutter += "</div>";
+
+  // Day columns.
+  const now = Date.now();
+  const todayMid = new Date();
+  todayMid.setHours(0, 0, 0, 0);
+  let cols = "";
+  let minTop = Infinity;
+  for (let d = 0; d < 7; d++) {
+    const { dayStart, segs } = days[d];
+    const isToday = dayStart.getTime() === todayMid.getTime();
+    let blocks = "";
+    for (const seg of segs) {
+      const topPx = seg.rTop;
+      const hPx = seg.rH;
+      if (topPx < minTop) minTop = topPx;
+      const w = 100 / seg.cols;
+      const left = seg.lane * w;
+      const tc = tagColor(seg.key);
+      const title = parseTag(seg.s.project_name || "").title || seg.s.project_name || "session";
+      const active = seg.s.ended_at && now - new Date(seg.s.ended_at).getTime() < 2 * 3600000;
+      const cls = "cal-event" + (active ? " is-active" : "") +
+        (seg.tail ? " is-cont" : "") + (seg.hasTail ? " has-cont" : "");
+      // Faint divider only on continuations; the head keeps its clean top edge.
+      const divider = seg.tail ? `border-top:1px solid ${tc}59;` : "";
+      blocks += `<div class="${cls}"
+        style="top:${topPx}px;height:${hPx}px;left:calc(${left}% + 1px);width:calc(${w}% - 2px);background:${tc}26;color:${tc};border-color:${tc};${divider}"
+        onclick="openSessionModal('${esc(seg.s.session_id)}')"
+        onmouseenter="calShowTip(event,'${esc(seg.s.session_id)}')"
+        onmouseleave="calHideTip()">
+        ${seg.tail ? "" : `<span class="cal-event-label">${esc(title)}</span>`}</div>`;
+    }
+    cols += `<div class="cal-day${isToday ? " is-today" : ""}" style="height:${24 * CAL_HOUR_H}px">${blocks}</div>`;
+  }
+
+  wrap.innerHTML =
+    `<div class="cal" style="--cal-hour-h:${CAL_HOUR_H}px">
+      <div class="cal-corner"></div>
+      ${_calDayHeads(weekStart)}
+      <div class="cal-body" style="height:${24 * CAL_HOUR_H}px">${gutter}${cols}</div>
+    </div>`;
+
+  // Scroll to first activity (or 8am) so the day opens where the work is.
+  const target = isFinite(minTop) ? Math.max(0, minTop - 24) : 8 * CAL_HOUR_H;
+  wrap.scrollTop = target;
+
+  // Reflect a persisted/active view filter in the toolbar badge.
+  _updateCalFilterBadge();
+}
+
+// Project identity used for colour, lane grouping and run-merging — matches the
+// key fed to tagColor() so a merged run is uniform in hue.
+function _projKey(seg) {
+  const p = seg.s.project_name || "";
+  return parseTag(p).tag || p || "?";
+}
+
+function _packLanes(segs) {
+  // Greedy interval partitioning within overlapping clusters. Each block gets a
+  // lane; cluster width = number of concurrent lanes so isolated blocks are wide.
+  // Two blocks need separate lanes only when they visually collide (vEnd honours
+  // the min-height floor) AND belong to different projects. Same-project blocks
+  // keep sharing a lane, so back-to-back sessions of one project stay full-width
+  // and merge into a single block (see _mergeRuns) instead of splitting.
+  const vEnd = (seg) => Math.max(seg.end, seg.start + CAL_MIN_MS);
+  let cluster = [];
+  let clusterEnd = -Infinity;
+  const flush = () => {
+    const lanes = []; // lane index → { trueEnd, vEnd, key } of its last block
+    for (const seg of cluster) {
+      const key = _projKey(seg);
+      let placed = -1;
+      for (let i = 0; i < lanes.length; i++) {
+        const ln = lanes[i];
+        // Same project may stack once truly clear; others must clear the
+        // rendered (min-height) extent so they never visually overlap.
+        const free = ln.key === key ? ln.trueEnd <= seg.start : ln.vEnd <= seg.start;
+        if (free) { placed = i; break; }
+      }
+      if (placed === -1) { placed = lanes.length; lanes.push(null); }
+      lanes[placed] = { trueEnd: seg.end, vEnd: vEnd(seg), key };
+      seg.lane = placed;
+    }
+    const cols = lanes.length;
+    for (const seg of cluster) seg.cols = cols;
+    cluster = [];
+    clusterEnd = -Infinity;
+  };
+  for (const seg of segs) {
+    if (cluster.length && seg.start >= clusterEnd) flush();
+    cluster.push(seg);
+    clusterEnd = Math.max(clusterEnd, vEnd(seg));
+  }
+  if (cluster.length) flush();
+}
+
+// Resolve rendered geometry within each lane and mark same-project runs. Blocks
+// in a lane are laid head-to-tail (min-height can make a short block overlap the
+// next); a continuation of the SAME project becomes a "tail" that abuts its head
+// with a faint divider and no label, so the run reads as one merged block.
+function _mergeRuns(segs) {
+  const lanePrev = new Map(); // lane → previously placed seg
+  for (const seg of segs) { // segs are sorted by start
+    seg.rTop = (seg.top / 3600000) * CAL_HOUR_H;
+    seg.rH = Math.max(CAL_MIN_BLOCK_H, ((seg.end - seg.start) / 3600000) * CAL_HOUR_H);
+    seg.key = _projKey(seg);
+    seg.tail = false;
+    seg.hasTail = false;
+    const prev = lanePrev.get(seg.lane);
+    if (prev && seg.rTop < prev.rTop + prev.rH - 0.5) {
+      seg.rTop = prev.rTop + prev.rH; // abut below prev; never overlap
+      if (prev.key === seg.key) {
+        seg.tail = true; // continuation: no label, divider on top
+        prev.hasTail = true; // head: square its bottom edge
+      }
+    }
+    lanePrev.set(seg.lane, seg);
+  }
+}
+
+const _CAL_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function _calDayHeads(weekStart) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let out = "";
+  for (let d = 0; d < 7; d++) {
+    const day = new Date(weekStart);
+    day.setDate(day.getDate() + d);
+    const isToday = day.getTime() === today.getTime();
+    out += `<div class="cal-dayhead${isToday ? " is-today" : ""}">
+      <span class="cal-dow">${_CAL_DOW[d]}</span>
+      <span class="cal-dnum">${day.getDate()}</span></div>`;
+  }
+  return out;
+}
+
+function _calHourLabel(h) {
+  if (h === 0) return "12 AM";
+  if (h === 12) return "12 PM";
+  return h < 12 ? h + " AM" : h - 12 + " PM";
+}
+
+function _renderCalHeader(weekStart, weekEnd) {
+  const last = new Date(weekEnd);
+  last.setDate(last.getDate() - 1);
+  const mo = (d) => d.toLocaleString(undefined, { month: "long" });
+  const sameMonth = weekStart.getMonth() === last.getMonth();
+  const label = sameMonth
+    ? `${mo(weekStart)} ${weekStart.getDate()} – ${last.getDate()}, ${last.getFullYear()}`
+    : `${mo(weekStart)} ${weekStart.getDate()} – ${mo(last)} ${last.getDate()}, ${last.getFullYear()}`;
+  document.getElementById("calRange").textContent = label;
+}
+
+function _renderCalLegend(tagsSeen) {
+  const el = document.getElementById("calLegend");
+  if (!el) return;
+  const entries = [...tagsSeen.values()].sort((a, b) =>
+    a.label.localeCompare(b.label),
+  );
+  el.innerHTML = entries
+    .map(
+      ({ color, label }) =>
+        `<span class="cal-legend-item"><span class="cal-swatch" style="background:${color}"></span>${esc(label)}</span>`,
+    )
+    .join("");
+}
+
+// ── Calendar filter (tag / project include list) ─────────────────────────────
+// _calHidden holds the project_name keys the user has switched off. Empty means
+// "show everything", so projects that appear later default to visible.
+
+// Group the projects present in the loaded sessions by tag, for the popover.
+function _calFilterGroups() {
+  const groups = new Map(); // tag label → Set of project_name keys
+  for (const s of _sessionsData || []) {
+    if (s.hidden) continue; // hidden in Settings — not offered in the filter
+    const key = s.project_name || "";
+    const { tag } = parseTag(key);
+    const g = tag || "·"; // "·" bucket for untagged
+    if (!groups.has(g)) groups.set(g, new Set());
+    groups.get(g).add(key);
+  }
+  return groups;
+}
+
+function calToggleFilter(ev) {
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById("calFilterPop");
+  const btn = document.getElementById("calFilterBtn");
+  if (!pop || !btn) return;
+  const open = pop.hasAttribute("hidden");
+  if (open) {
+    _renderCalFilter();
+    pop.removeAttribute("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    setTimeout(() => document.addEventListener("click", _calFilterOutside), 0);
+  } else {
+    _closeCalFilter();
+  }
+}
+
+function _closeCalFilter() {
+  const pop = document.getElementById("calFilterPop");
+  const btn = document.getElementById("calFilterBtn");
+  if (pop) pop.setAttribute("hidden", "");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+  document.removeEventListener("click", _calFilterOutside);
+}
+
+function _calFilterOutside(ev) {
+  if (!ev.target.closest(".cal-filter-wrap")) _closeCalFilter();
+}
+
+function _renderCalFilter() {
+  const pop = document.getElementById("calFilterPop");
+  if (!pop) return;
+  const groups = _calFilterGroups();
+  const tags = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+
+  pop.textContent = "";
+  const head = document.createElement("div");
+  head.className = "cal-filter-head";
+  head.innerHTML =
+    '<span>Show in calendar</span><span class="cal-filter-actions">' +
+    '<button type="button" data-act="all">All</button>' +
+    '<button type="button" data-act="none">None</button></span>';
+  head.querySelector('[data-act="all"]').onclick = () => _calFilterBulk(false);
+  head.querySelector('[data-act="none"]').onclick = () => _calFilterBulk(true);
+  pop.appendChild(head);
+
+  for (const tag of tags) {
+    const projects = [...groups.get(tag)].sort((a, b) =>
+      projTagLabel(a).localeCompare(projTagLabel(b)),
+    );
+    const allHidden = projects.every((p) => _calHidden.has(p));
+    const someHidden = projects.some((p) => _calHidden.has(p));
+
+    const tagRow = document.createElement("label");
+    tagRow.className = "cal-filter-row is-tag";
+    const tagCb = document.createElement("input");
+    tagCb.type = "checkbox";
+    tagCb.checked = !allHidden;
+    tagCb.indeterminate = someHidden && !allHidden;
+    tagCb.onchange = () => _calFilterSetTag(projects, tagCb.checked);
+    const tagLabel = document.createElement("span");
+    tagLabel.className = "cal-filter-label";
+    tagLabel.textContent = tag === "·" ? "untagged" : tag;
+    tagRow.append(tagCb, tagLabel);
+    if (tag !== "·") {
+      const sw = document.createElement("span");
+      sw.className = "cal-swatch";
+      sw.style.background = tagColor(tag);
+      tagRow.append(sw);
+    }
+    pop.appendChild(tagRow);
+
+    for (const key of projects) {
+      const { title } = parseTag(key);
+      const projRow = document.createElement("label");
+      projRow.className = "cal-filter-row is-proj";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !_calHidden.has(key);
+      cb.onchange = () => _calFilterSetProj(key, cb.checked);
+      const lbl = document.createElement("span");
+      lbl.className = "cal-filter-label";
+      lbl.textContent = title || "(untitled)";
+      projRow.append(cb, lbl);
+      pop.appendChild(projRow);
+    }
+  }
+}
+
+function _calFilterSetProj(key, show) {
+  if (show) _calHidden.delete(key);
+  else _calHidden.add(key);
+  _saveCalHidden();
+  renderCalendar();
+  _renderCalFilter();
+  _updateCalFilterBadge();
+}
+
+function _calFilterSetTag(keys, show) {
+  for (const k of keys) {
+    if (show) _calHidden.delete(k);
+    else _calHidden.add(k);
+  }
+  _saveCalHidden();
+  renderCalendar();
+  _renderCalFilter();
+  _updateCalFilterBadge();
+}
+
+function _calFilterBulk(hideAll) {
+  _calHidden = new Set();
+  if (hideAll) {
+    for (const g of _calFilterGroups().values())
+      for (const k of g) _calHidden.add(k);
+  }
+  _saveCalHidden();
+  renderCalendar();
+  _renderCalFilter();
+  _updateCalFilterBadge();
+}
+
+function _updateCalFilterBadge() {
+  const badge = document.getElementById("calFilterBadge");
+  const btn = document.getElementById("calFilterBtn");
+  if (!badge || !btn) return;
+  const n = _calHidden.size;
+  if (n > 0) {
+    badge.textContent = String(n);
+    badge.removeAttribute("hidden");
+    btn.classList.add("is-active");
+  } else {
+    badge.setAttribute("hidden", "");
+    btn.classList.remove("is-active");
+  }
+}
+
+// ── Calendar tooltip ─────────────────────────────────────────────────────────
+// Anchored beside the hovered block and positioned once on enter — it does NOT
+// follow the cursor. A cursor-following tooltip sits on top of the block and
+// repaints it on every mousemove, which reads as the block "flashing". Hiding is
+// debounced so sliding between adjacent blocks doesn't blink the tooltip.
+let _calTipHideTimer = null;
+
+function calShowTip(ev, sid) {
+  const s = _calById[sid];
+  const el = document.getElementById("calTooltip");
+  if (!s || !el) return;
+  if (_calTipHideTimer) {
+    clearTimeout(_calTipHideTimer);
+    _calTipHideTimer = null;
+  }
+  const models = Object.keys(s.tokens_by_model || {})
+    .filter((m) => m !== "<synthetic>")
+    .map(shortModel)
+    .join(", ");
+  const title = s.custom_title || parseTag(s.project_name || "").title || "Session";
+  el.innerHTML = `
+    <div class="ct-title">${esc(title)}</div>
+    <div class="ct-proj">${s.project_name ? projTagHtml(s.project_name) : "—"}</div>
+    <div class="ct-row">${fmtDate(s.started_at)} → ${fmtDate(s.ended_at)}</div>
+    <div class="ct-row"><span class="ct-dur">${fmtDur(s.wall_duration_ms)}</span>
+      <span class="cost">$${fmtCost(s.cost_usd)}</span>
+      ${s.user_rounds ? `<span class="muted">· ${fmt(s.user_rounds)} rounds</span>` : ""}</div>
+    ${models ? `<div class="ct-row muted">${esc(models)}</div>` : ""}
+    ${s.summary ? `<div class="ct-summary">${esc(s.summary)}</div>` : ""}`;
+  _calPositionTip(el, ev.currentTarget || ev.target);
+}
+
+// Place the tooltip to the right of the block (flip to the left when there's no
+// room), aligned to the block's top and clamped to the viewport. Measured while
+// display-visible but visibility-hidden so it never paints at a stale position.
+function _calPositionTip(el, block) {
+  if (!block || !block.getBoundingClientRect) return;
+  const pad = 10;
+  // Measure at the top-left corner (never off-screen), so this transient frame
+  // can't spill past a viewport edge and toggle the page scrollbar — which, with
+  // classic (space-consuming) scrollbars, would reflow the whole 1fr grid and
+  // make the columns jitter. visibility:hidden still occupies layout, hence 0,0.
+  el.style.visibility = "hidden";
+  el.style.left = "0px";
+  el.style.top = "0px";
+  el.classList.add("show");
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const r = block.getBoundingClientRect();
+  let x = r.right + pad;
+  if (x + w > window.innerWidth - 8) x = r.left - w - pad;
+  if (x < 8) x = Math.max(8, Math.min(window.innerWidth - w - 8, r.left));
+  let y = r.top;
+  if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+  if (y < 8) y = 8;
+  el.style.left = Math.round(x) + "px";
+  el.style.top = Math.round(y) + "px";
+  el.style.visibility = "";
+}
+
+function calHideTip() {
+  if (_calTipHideTimer) clearTimeout(_calTipHideTimer);
+  _calTipHideTimer = setTimeout(() => {
+    const el = document.getElementById("calTooltip");
+    if (el) el.classList.remove("show");
+    _calTipHideTimer = null;
+  }, 60);
 }
 
 // ── Table helpers ──────────────────────────────────────────────────────────

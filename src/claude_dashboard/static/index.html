@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Claude Code Usage Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=8" />
+    <link rel="stylesheet" href="/static/styles.css?v=14" />
   </head>
   <body>
     <header>
@@ -98,6 +98,7 @@
       <button class="tab active" onclick="showTab('overview')">Overview</button>
       <button class="tab" onclick="showTab('projects')">Projects</button>
       <button class="tab" onclick="showTab('sessions')">Sessions</button>
+      <button class="tab" onclick="showTab('calendar')">Calendar</button>
       <button class="tab" onclick="showTab('settings')">Settings</button>
     </nav>
 
@@ -197,6 +198,38 @@
         </div>
       </div>
 
+      <!-- ── Calendar ──────────────────────────────────────────────────────── -->
+      <div class="page" id="page-calendar">
+        <div class="chart-card wide cal-card">
+          <div class="chart-card-header cal-header">
+            <div class="cal-nav">
+              <button class="cal-nav-btn" onclick="calShiftWeek(-1)" aria-label="Previous week">‹</button>
+              <button class="cal-today-btn" onclick="calGoToday()">Today</button>
+              <button class="cal-nav-btn" onclick="calShiftWeek(1)" aria-label="Next week">›</button>
+              <button class="cal-range-btn" id="calRangeBtn" onclick="calOpenDatePicker()" aria-haspopup="dialog" title="Jump to a week">
+                <span class="cal-range" id="calRange">—</span>
+                <svg class="cal-range-caret" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <div class="cal-meta">
+              <span class="cal-hours" id="calHours"></span>
+              <div class="cal-legend" id="calLegend"></div>
+              <div class="cal-filter-wrap">
+                <button class="cal-filter-btn" id="calFilterBtn" onclick="calToggleFilter(event)" aria-haspopup="true" aria-expanded="false">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 3h13M4 8h8M6.5 13h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  <span>Filter</span>
+                  <span class="cal-filter-badge" id="calFilterBadge" hidden></span>
+                </button>
+                <div class="cal-filter-pop" id="calFilterPop" hidden></div>
+              </div>
+            </div>
+          </div>
+          <div class="cal-grid-wrap" id="calGridWrap">
+            <div class="loading"><div class="spinner"></div> Loading…</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Settings ──────────────────────────────────────────────────────── -->
       <div class="page" id="page-settings">
         <div id="settingsContent">
@@ -208,6 +241,21 @@
       </div>
     </main>
 
+    <!-- Calendar week picker -->
+    <div class="modal-overlay cal-dp-overlay" id="calDpOverlay" onclick="calDpBgClose(event)">
+      <div class="modal cal-dp-modal" role="dialog" aria-label="Jump to week">
+        <button class="modal-close" onclick="calCloseDatePicker()" aria-label="Close">×</button>
+        <div class="cal-dp-head">
+          <button class="cal-nav-btn" onclick="calDpShiftMonth(-1)" aria-label="Previous month">‹</button>
+          <h2 class="cal-dp-title" id="calDpTitle">—</h2>
+          <button class="cal-nav-btn" onclick="calDpShiftMonth(1)" aria-label="Next month">›</button>
+        </div>
+        <div class="cal-dp-weekdays" id="calDpWeekdays"></div>
+        <div class="cal-dp-grid" id="calDpGrid" onmouseleave="calDpHoverWeek(-1)"></div>
+        <p class="cal-dp-hint">Number under each date is sessions active that day. Pick any date to show its week.</p>
+      </div>
+    </div>
+
     <!-- Session detail modal -->
     <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
       <div class="modal" id="modal">
@@ -217,8 +265,9 @@
     </div>
 
     <div id="toast"></div>
+    <div id="calTooltip" class="cal-tooltip" aria-hidden="true"></div>
 
     <script src="/static/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=15"></script>
+    <script src="/static/app.js?v=21"></script>
   </body>
 </html>
