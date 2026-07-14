@@ -15,7 +15,7 @@ def _dist_version() -> str:
 def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(
         prog="dashboard-for-claude-code",
-        description="Local, read-only dashboard for your Claude Code session logs.",
+        description="Claude Code Personal Analytics — a private, local, read-only analytics dashboard for your Claude Code sessions.",
     )
     parser.add_argument(
         "--host",

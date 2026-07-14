@@ -75,7 +75,7 @@ async def _lifespan(app: FastAPI):
             _store.close()
 
 
-app = FastAPI(title="Claude Code Usage Dashboard", lifespan=_lifespan)
+app = FastAPI(title="Claude Code Personal Analytics", lifespan=_lifespan)
 
 
 @app.middleware("http")
