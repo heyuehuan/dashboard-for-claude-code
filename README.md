@@ -27,6 +27,19 @@ This isn't usage monitoring — it's personal analytics. Point it at your own hi
 - Is my style more **supervised or autonomous**?
 - **How large** is the compute I'm actually spending on Claude Code?
 
+## Quick start (no install)
+
+Run the latest release straight from PyPI — no clone, no virtualenv, nothing left behind:
+
+```bash
+uvx dashboard-for-claude-code       # with uv  (https://docs.astral.sh/uv/)
+pipx run dashboard-for-claude-code  # with pipx
+```
+
+Then open **http://localhost:8042**. On first run it scans `~/.claude/projects/` (read-only) and caches results under `~/.local/share/dashboard-for-claude-code/` (respects `XDG_DATA_HOME`), so later runs are instant. Pass flags after the command, e.g. `uvx dashboard-for-claude-code --port 9000`.
+
+Prefer a persistent install? `uv tool install dashboard-for-claude-code` or `pipx install dashboard-for-claude-code` gives you the same **`dashboard-for-claude-code`** command on your PATH. To work on the code, see [Setup](#setup) and [Run](#run).
+
 ## Run it with Claude Code
 
 Already using Claude Code? Skip the manual steps — paste this prompt and let it set everything up:
@@ -111,8 +124,7 @@ uv run python -m claude_dashboard
 
 Then open **http://localhost:8042**.
 
-If you've installed the package (`uv pip install -e .` or `pipx install .`), the
-**`dashboard-for-claude-code`** command works the same way:
+If you've installed the package — from PyPI (`uv tool install dashboard-for-claude-code` or `pipx install dashboard-for-claude-code`) or from a checkout (`uv pip install -e .` / `pipx install .`) — the **`dashboard-for-claude-code`** command works the same way, and `uvx` / `pipx run` run it without installing at all (see [Quick start](#quick-start-no-install)):
 
 ```bash
 dashboard-for-claude-code
