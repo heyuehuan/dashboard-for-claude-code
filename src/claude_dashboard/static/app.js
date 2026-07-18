@@ -240,6 +240,11 @@ let _summaryData = null;
 let _projectsData = null;
 let _sessionsData = null;
 let _settingsData = null;
+// Fetched data (_projectsData/_sessionsData) can be populated by other views
+// (calendar, remote project pages) without the tab's table ever being drawn,
+// so track rendering separately from fetching.
+let _projectsRendered = false;
+let _sessionsRendered = false;
 let _sortState = {};
 
 // ── Tab routing ────────────────────────────────────────────────────────────
@@ -260,8 +265,15 @@ function showTab(name, _pushUrl = true) {
   }
 
   if (name === "overview" && !_summaryData) loadOverview();
-  if (name === "projects" && !_projectsData) loadProjects();
-  if (name === "sessions" && !_sessionsData) loadSessions();
+  if (name === "projects") {
+    if (!_projectsData) loadProjects();
+    else if (!_projectsRendered)
+      renderProjectsTable(groupProjectsByName(_projectsData));
+  }
+  if (name === "sessions") {
+    if (!_sessionsData) loadSessions();
+    else if (!_sessionsRendered) renderSessionsTable(_sessionsData);
+  }
   if (name === "calendar") loadCalendar();
   if (name === "settings") loadSettings();
 }
@@ -269,6 +281,7 @@ function showTab(name, _pushUrl = true) {
 function goAllSessions() {
   history.pushState({ tab: "sessions" }, "", "/sessions");
   _sessionsData = null;
+  _sessionsRendered = false;
   showTab("sessions", false);
 }
 
@@ -300,6 +313,7 @@ window.addEventListener("popstate", (e) => {
     openProject(s.project, false);
   } else if (s?.tab === "sessions") {
     _sessionsData = null;
+    _sessionsRendered = false;
     showTab("sessions", false);
   } else if (s?.tab) {
     showTab(s.tab, false);
@@ -437,6 +451,8 @@ async function doRefresh() {
     _summaryData = null;
     _projectsData = null;
     _sessionsData = null;
+    _projectsRendered = false;
+    _sessionsRendered = false;
     destroyCharts();
     loadOverview();
     if (document.getElementById("page-projects").classList.contains("active"))
@@ -573,6 +589,8 @@ async function saveProjectSetting(btn, projectPath) {
     _summaryData = null;
     _projectsData = null;
     _sessionsData = null;
+    _projectsRendered = false;
+    _sessionsRendered = false;
     destroyCharts();
   } catch (e) {
     showToast("Save failed: " + e.message);
@@ -628,6 +646,8 @@ async function saveAllProjectSettings(btn) {
     _summaryData = null;
     _projectsData = null;
     _sessionsData = null;
+    _projectsRendered = false;
+    _sessionsRendered = false;
     destroyCharts();
   } catch (e) {
     showToast("Save failed: " + e.message);
@@ -1326,6 +1346,7 @@ function renderProjectsTable(projects) {
     "projectsContent",
     onProjectClick,
   );
+  _projectsRendered = true;
 }
 
 function renderProjectRow(p) {
@@ -1361,6 +1382,7 @@ async function openProject(projectName, _pushUrl = true) {
     );
   }
   showTab("sessions", false);
+  _sessionsRendered = false; // project view replaces the all-sessions table
   document.getElementById("sessionsContent").innerHTML =
     `<div class="loading"><div class="spinner"></div> Loading…</div>`;
   try {
@@ -1546,6 +1568,7 @@ function renderSessionsTable(sessions) {
     0,
     -1,
   );
+  _sessionsRendered = true;
 }
 
 function sessionCols() {
