@@ -44,6 +44,8 @@ _RATES: list[tuple[str, Rate]] = [
     ("sonnet-4-6", Rate(3.00, 15.00, 0.30, 3.75,  3.75)),
     ("sonnet-4-5", Rate(3.00, 15.00, 0.30, 3.75,  3.75)),
     ("sonnet-4",   Rate(3.00, 15.00, 0.30, 3.75,  3.75)),
+    # Bare "sonnet" alias (session files sometimes record the alias, not a full id)
+    ("sonnet",     Rate(3.00, 15.00, 0.30, 3.75,  3.75)),
     # Haiku
     ("haiku-4-5",  Rate(1.00,  5.00, 0.10, 1.25,  1.25)),
     ("haiku-3-5",  Rate(0.80,  4.00, 0.08, 1.00,  1.00)),

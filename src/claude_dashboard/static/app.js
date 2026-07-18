@@ -126,6 +126,16 @@ const MODEL_RATES = [
     },
   ],
   [
+    "sonnet-5",
+    {
+      input: 3.0,
+      output: 15.0,
+      cache_read: 0.3,
+      cache_write_5m: 3.75,
+      cache_write_1h: 3.75,
+    },
+  ],
+  [
     "sonnet-4-6",
     {
       input: 3.0,
@@ -147,6 +157,16 @@ const MODEL_RATES = [
   ],
   [
     "sonnet-4",
+    {
+      input: 3.0,
+      output: 15.0,
+      cache_read: 0.3,
+      cache_write_5m: 3.75,
+      cache_write_1h: 3.75,
+    },
+  ],
+  [
+    "sonnet",
     {
       input: 3.0,
       output: 15.0,
@@ -2650,11 +2670,15 @@ function shortModel(m) {
   if (m.includes("opus-4-5")) return "Opus 4.5";
   if (m.includes("opus-4-1")) return "Opus 4.1";
   if (m.includes("opus-4")) return "Opus 4";
+  if (m.includes("sonnet-5")) return "Sonnet 5";
   if (m.includes("sonnet-4-6")) return "Sonnet 4.6";
   if (m.includes("sonnet-4-5")) return "Sonnet 4.5";
   if (m.includes("sonnet-4")) return "Sonnet 4";
   if (m.includes("haiku-4-5")) return "Haiku 4.5";
   if (m.includes("haiku-3-5")) return "Haiku 3.5";
+  if (m === "sonnet") return "Sonnet";
+  if (m === "opus") return "Opus";
+  if (m === "haiku") return "Haiku";
   return m.slice(0, 12);
 }
 function modelClass(m) {
