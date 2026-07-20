@@ -272,7 +272,19 @@ let _sortState = {};
 function showTab(name, _pushUrl = true) {
   document.querySelectorAll(".tab").forEach((t, i) => {
     const names = ["overview", "projects", "sessions", "calendar", "settings"];
-    t.classList.toggle("active", names[i] === name);
+    const isActive = names[i] === name;
+    t.classList.toggle("active", isActive);
+    // Keep the active tab visible in the horizontally-scrolling strip when the
+    // tab changes from code (deep link, back button). Scroll the strip
+    // horizontally only — scrollIntoView() would also pull the page vertically
+    // to the (non-sticky) nav when showTab fires from popstate while scrolled.
+    if (isActive) {
+      const nav = t.parentElement;
+      const tr = t.getBoundingClientRect();
+      const nr = nav.getBoundingClientRect();
+      if (tr.left < nr.left) nav.scrollLeft -= nr.left - tr.left + 12;
+      else if (tr.right > nr.right) nav.scrollLeft += tr.right - nr.right + 12;
+    }
   });
   document
     .querySelectorAll(".page")
@@ -1630,8 +1642,13 @@ function renderSessionRow(s) {
 
 // ── Session modal ──────────────────────────────────────────────────────────
 
+function _sessionModalKey(e) {
+  if (e.key === "Escape") closeModal();
+}
+
 async function openSessionModal(sessionId) {
   document.getElementById("modalOverlay").classList.add("open");
+  document.addEventListener("keydown", _sessionModalKey);
   document.getElementById("modalContent").innerHTML =
     `<div class="loading"><div class="spinner"></div> Loading…</div>`;
   try {
@@ -1803,6 +1820,7 @@ function buildSessionModal(s) {
 function closeModal(e) {
   if (!e || e.target === document.getElementById("modalOverlay")) {
     document.getElementById("modalOverlay").classList.remove("open");
+    document.removeEventListener("keydown", _sessionModalKey);
   }
 }
 

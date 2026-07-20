@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Claude Code Personal Analytics</title>
-    <link rel="stylesheet" href="/static/styles.css?v=14" />
+    <link rel="stylesheet" href="/static/styles.css?v=20" />
   </head>
   <body>
     <header>
@@ -21,7 +21,7 @@
           <rect x="10" y="7" width="4" height="13" rx="1" fill="#5a67f2" />
           <rect x="17" y="3" width="4" height="17" rx="1" fill="#5a67f2" />
         </svg>
-        <h1><span class="brand">Claude Code</span> Personal Analytics</h1>
+        <h1><span class="brand">Claude Code</span><span class="h1-rest"> Personal Analytics</span></h1>
       </div>
       <div class="header-actions">
         <a
@@ -258,8 +258,8 @@
 
     <!-- Session detail modal -->
     <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
-      <div class="modal" id="modal">
-        <button class="modal-close" onclick="closeModal()">×</button>
+      <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Session detail">
+        <button class="modal-close" onclick="closeModal()" aria-label="Close">×</button>
         <div id="modalContent"></div>
       </div>
     </div>
@@ -268,6 +268,6 @@
     <div id="calTooltip" class="cal-tooltip" aria-hidden="true"></div>
 
     <script src="/static/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=21"></script>
+    <script src="/static/app.js?v=26"></script>
   </body>
 </html>

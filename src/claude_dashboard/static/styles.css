@@ -59,6 +59,7 @@
   --radius:    6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --header-h: 52px;   /* header height; nav sticks directly below it */
   --font: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
 
@@ -110,6 +111,7 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  min-height: 100dvh;
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -120,8 +122,10 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  height: 52px;
+  gap: 12px;
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  height: var(--header-h);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -129,11 +133,17 @@ header {
   z-index: 100;
 }
 
-.header-logo { display: flex; align-items: center; gap: 8px; }
-header h1 { font-size: .9rem; font-weight: 600; letter-spacing: -.2px; color: var(--text); }
+/* min-width:0 lets the title shrink/ellipsis instead of pushing the action
+   buttons off the right edge on narrow phones. */
+.header-logo { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.header-logo svg { flex: none; }
+header h1 {
+  font-size: .9rem; font-weight: 600; letter-spacing: -.2px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 header h1 .brand { color: var(--accent); }
 
-.header-actions { display: flex; align-items: center; gap: 6px; }
+.header-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 
 .usage-btn {
   display: flex; align-items: center; justify-content: center;
@@ -176,33 +186,48 @@ header h1 .brand { color: var(--accent); }
 .last-updated-label { font-size: .78rem; color: var(--text-2); white-space: nowrap; padding: 0 4px; }
 
 /* ── Nav tabs ────────────────────────────────────────────────────────────── */
+/* Five tabs don't fit across a small phone; scroll them horizontally rather
+   than letting them widen the page (which scrolls every other view sideways). */
 nav {
   display: flex;
-  padding: 0 24px;
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   gap: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  /* Stick directly under the (sticky) header so the tab bar stays with the
+     title while the page scrolls. */
+  position: sticky;
+  top: calc(var(--header-h) - 1px);   /* overlap the header's 1px border */
+  z-index: 99;
 }
+nav::-webkit-scrollbar { display: none; }
+/* Active underline is an inset shadow, not a border + negative margin: it draws
+   inside the box, so it survives nav's horizontal scroll container. */
 .tab {
-  padding: 10px 16px;
+  flex: none;
+  white-space: nowrap;
+  padding: 10px 16px 12px;
   font-size: .82rem;
   font-weight: 500;
   color: var(--muted);
   border: none;
   background: none;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color .12s, border-color .12s;
-  margin-bottom: -1px;
+  transition: color .12s, box-shadow .12s;
 }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab.active { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .tab:hover:not(.active) { color: var(--text-2); }
 
 /* ── Main content ────────────────────────────────────────────────────────── */
 main {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 24px 24px 64px;
+  padding: 24px max(24px, env(safe-area-inset-right))
+           calc(64px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
 }
 .page { display: none; }
 .page.active { display: block; }
@@ -405,15 +430,23 @@ tbody td strong { color: var(--text); font-weight: 600; }
 .badge.haiku  { color: #55bf50; border-color: rgba(12,163,12,.25);   background: var(--green-bg); }
 
 /* ── Modal ───────────────────────────────────────────────────────────────── */
+/* The overlay is sized with dvh, not `inset: 0`: on mobile Safari a fixed
+   element spans the *large* viewport (URL bar hidden), so a centred modal gets
+   its top clipped behind the address bar. dvh tracks the visible viewport. */
 .modal-overlay {
   display: none;
-  position: fixed; inset: 0;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 100vh;
+  height: 100dvh;
   background: rgba(0,0,0,.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 200;
   align-items: center;
   justify-content: center;
+  padding: 24px 20px;
+  overscroll-behavior: contain;
 }
 .modal-overlay.open { display: flex; }
 .modal {
@@ -423,7 +456,7 @@ tbody td strong { color: var(--text); font-weight: 600; }
   padding: 28px;
   max-width: 700px;
   width: 90%;
-  max-height: 85vh;
+  max-height: 100%;
   overflow-y: auto;
   position: relative;
   box-shadow: var(--shadow-lg);
@@ -438,6 +471,28 @@ tbody td strong { color: var(--text); font-weight: 600; }
   transition: background .12s, color .12s; line-height: 1;
 }
 .modal-close:hover { background: var(--surface3); color: var(--text); }
+
+/* Session modal: #modalContent is the scroller, not .modal itself, so the close
+   button stays pinned while the body scrolls. The title is just the first line
+   of that body — no separate header row, nothing that can overlap it. */
+#modal {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 260px;   /* so the spinner state isn't a thin sliver */
+}
+#modal .modal-close { top: 14px; right: 14px; z-index: 3; }
+#modalContent h2 { padding-right: 34px; }
+#modalContent {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;   /* flex item must be allowed to shrink, or it overflows */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 20px 28px 28px;
+}
+#modalContent > .loading { height: 100%; padding: 24px; }
 
 .detail-grid {
   display: grid;
@@ -456,7 +511,12 @@ tbody td strong { color: var(--text); font-weight: 600; }
   text-transform: uppercase; letter-spacing: .08em;
   margin-bottom: 4px; font-weight: 600;
 }
-.detail-item .value { font-size: .87rem; font-weight: 500; color: var(--text); }
+/* Session ids / branch names are unbroken strings — let them wrap rather than
+   push the grid column wider than the screen. */
+.detail-item .value {
+  font-size: .87rem; font-weight: 500; color: var(--text);
+  overflow-wrap: anywhere;
+}
 
 .section-title {
   font-size: .66rem; color: var(--muted);
@@ -473,6 +533,8 @@ tbody td strong { color: var(--text); font-weight: 600; }
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text-2);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* ── Back button ─────────────────────────────────────────────────────────── */
@@ -489,7 +551,10 @@ tbody td strong { color: var(--text); font-weight: 600; }
 
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 #toast {
-  position: fixed; bottom: 20px; right: 20px;
+  position: fixed;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  right: max(20px, env(safe-area-inset-right));
+  max-width: calc(100vw - 40px);
   background: var(--toast-bg); color: var(--toast-text);
   border: 1px solid transparent;
   border-radius: var(--radius-md); padding: 9px 16px;
@@ -556,6 +621,7 @@ tbody td strong { color: var(--text); font-weight: 600; }
 /* ── Settings page ───────────────────────────────────────────────────────── */
 .settings-header {
   display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
   margin-bottom: 18px;
 }
 .settings-title { font-size: 1rem; font-weight: 600; color: var(--text); }
@@ -641,10 +707,13 @@ table { min-width: 540px; }
 
 /* ── Tablet  (≤ 768 px) ── */
 @media (max-width: 768px) {
-  header { padding: 0 16px; }
-  nav { padding: 0 8px; }
-  .tab { padding: 10px 12px; font-size: .79rem; }
-  main { padding: 16px 16px 48px; }
+  header { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  nav { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  .tab { padding: 10px 12px 12px; font-size: .79rem; }
+  main {
+    padding: 16px max(16px, env(safe-area-inset-right))
+             calc(48px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
 
   .kpi-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .kpi { padding: 13px 14px; }
@@ -653,15 +722,61 @@ table { min-width: 540px; }
   .proj-summary-grid { grid-template-columns: 1fr; gap: 14px; }
 
   .detail-grid { grid-template-columns: 1fr 1fr; }
+
+  .modal-overlay { padding: 16px 14px; }
+}
+
+/* ── Session modal as a bottom sheet on phones (≤ 640 px) ── */
+@media (max-width: 640px) {
+  #modalOverlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  /* Fixed height, not max-height: the sheet is the same size whether it's
+     showing the spinner, a short session, or a long one — so opening one never
+     resizes under your thumb mid-read. */
+  #modal {
+    width: 100%;
+    max-width: none;
+    height: 88dvh;
+    max-height: 88dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+  }
+  #modalOverlay.open #modal { animation: sheet-up .22s cubic-bezier(.32,.72,0,1); }
+  #modalContent {
+    padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  /* 26px is a hard target with a thumb — grow the close hit area on touch. */
+  #modal .modal-close { width: 34px; height: 34px; top: 12px; right: 12px; font-size: 1.05rem; }
+  #modalContent h2 { padding-right: 40px; }
+}
+@keyframes sheet-up {
+  from { transform: translateY(14px); opacity: .6; }
+  to   { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #modalOverlay.open #modal { animation: none; }
 }
 
 /* ── Mobile  (≤ 480 px) ── */
 @media (max-width: 480px) {
-  header { padding: 0 12px; height: 48px; }
+  /* Shorter header on phones — set on :root so nav's sticky top (a sibling)
+     sees it too. */
+  :root { --header-h: 48px; }
+  header {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
   .btn-label { display: none; }
-  nav { padding: 0 4px; }
-  .tab { padding: 9px 10px; font-size: .76rem; }
-  main { padding: 12px 10px 48px; }
+  /* Keep just the brand — the full title has no room next to the buttons. */
+  .h1-rest { display: none; }
+  nav { padding-left: max(4px, env(safe-area-inset-left)); padding-right: max(4px, env(safe-area-inset-right)); }
+  .tab { padding: 9px 10px 11px; font-size: .76rem; }
+  main {
+    padding: 12px max(10px, env(safe-area-inset-right))
+             calc(48px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
 
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .kpi { padding: 11px 12px; }
@@ -671,8 +786,10 @@ table { min-width: 540px; }
   thead th, tbody td { padding: 8px 10px; }
   table { font-size: .78rem; }
 
-  .modal { width: 98%; padding: 18px 14px; max-height: 94vh; }
-  .detail-grid { grid-template-columns: 1fr; }
+  .modal { width: 98%; padding: 18px 14px; max-height: 94dvh; }
+  /* Stay 2-up where the value fits (halves the sheet's height); long values
+     wrap inside their card instead of forcing a single column. */
+  .detail-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 
   .proj-tag { font-size: .62rem; padding: 1px 5px; }
 
@@ -682,7 +799,7 @@ table { min-width: 540px; }
 
 /* ── Session modal subtitle (last prompt) ── */
 .modal-subtitle {
-  margin: -6px 0 14px;
+  margin: 0 0 14px;
   color: var(--text-2);
   font-size: .9rem;
   line-height: 1.45;
@@ -814,7 +931,8 @@ table { min-width: 540px; }
 }
 .cal-filter-pop {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
-  width: 250px; max-height: 340px; overflow-y: auto;
+  width: 250px; max-width: calc(100vw - 24px);
+  max-height: 340px; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: 0 8px 28px rgba(0,0,0,.22);
   padding: 8px;
@@ -908,7 +1026,10 @@ table { min-width: 540px; }
 }
 
 .cal-grid-wrap {
-  max-height: 68vh; overflow: auto;
+  max-height: 68vh;
+  max-height: 68dvh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--border); border-radius: var(--radius-md);
   background: var(--surface);
 }
