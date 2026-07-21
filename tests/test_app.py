@@ -228,6 +228,9 @@ def test_refresh_endpoint_reports_shape(client, tmp_path, monkeypatch):
     body = r.json()
     assert set(body) >= {"added", "updated", "skipped", "pruned", "errors"}
     assert body["added"] == 0
+    # errors is an integer count, never the raw error strings (which carry
+    # filesystem paths / exception text) — see py/stack-trace-exposure fix.
+    assert isinstance(body["errors"], int)
 
 
 def test_put_setting_requires_project_path(client):

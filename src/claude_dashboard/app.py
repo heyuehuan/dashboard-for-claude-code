@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hmac
+import logging
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 from claude_dashboard.store import Store
 from claude_dashboard.scanner import refresh, RefreshReport
+
+_log = logging.getLogger("claude_dashboard")
 
 # DB location. DASHBOARD_DB lets tests, demos, and the screenshot generator
 # point at an isolated database so a run never has to touch (or scan) your
@@ -216,8 +219,11 @@ async def api_login(body: dict[str, Any], response: Response):
     token = body.get("token", "")
     if not isinstance(token, str) or not hmac.compare_digest(token, _AUTH_TOKEN):
         raise HTTPException(401, "Invalid token")
+    # Set the cookie from the trusted server-side _AUTH_TOKEN, not the request
+    # value: they are equal here (compare_digest passed), and using the vetted
+    # constant keeps user-supplied input out of the Set-Cookie header.
     # secure=True on non-localhost so the cookie is HTTPS-only when hosted remotely.
-    response.set_cookie("dashboard_auth", token, httponly=True, samesite="strict",
+    response.set_cookie("dashboard_auth", _AUTH_TOKEN, httponly=True, samesite="strict",
                         secure=not _IS_LOCALHOST)
     return {"ok": True}
 
@@ -239,12 +245,18 @@ def api_refresh(prune: bool = Query(False)):
     file no longer exists on disk (by default deleted transcripts stay in the
     cache so history survives Claude Code's own cleanup)."""
     report = _do_refresh(prune=prune)
+    # Log the raw error strings (they contain filesystem paths and exception
+    # detail) server-side only; expose just a count to the client so a scan
+    # never leaks internal paths or stack-trace text.
+    if report.errors:
+        _log.warning("Refresh completed with %d error(s):\n%s",
+                     len(report.errors), "\n".join(report.errors))
     return {
         "added": report.added,
         "updated": report.updated,
         "skipped": report.skipped,
         "pruned": report.pruned,
-        "errors": report.errors[:20],
+        "errors": len(report.errors),
     }
 
 
