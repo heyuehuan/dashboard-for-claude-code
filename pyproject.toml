@@ -45,7 +45,7 @@ packages = ["src/claude_dashboard"]
 dev = [
     "pytest>=9.1.1",
     "httpx>=0.27",
-    "ruff>=0.15.22",
+    "ruff>=0.16.0",
 ]
 # Security tooling is isolated in its own group so a plain `uv sync` (used to just
 # run the app) stays runtime-only. CI and contributors opt in via `--group security`.
