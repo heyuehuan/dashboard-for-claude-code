@@ -62,9 +62,13 @@ def parse_file(path: str | Path) -> dict[str, Any]:
 
             ltype = line.get("type")
 
-            # Track timestamps from any line that carries one
+            # Track timestamps from any line that carries one. The isinstance
+            # guard matters: a non-string timestamp (a number, say) would make
+            # the `<`/`>` comparisons below raise TypeError and cost us the
+            # whole session, since scanner treats a parse failure as fatal to
+            # that file. Ignoring the odd bad line is the better trade.
             ts = line.get("timestamp")
-            if ts:
+            if isinstance(ts, str) and ts:
                 if first_ts is None or ts < first_ts:
                     first_ts = ts
                 if last_ts is None or ts > last_ts:
