@@ -138,3 +138,34 @@ def test_timestamps():
     assert s["ended_at"] == "2026-05-10T10:00:10.002Z"
     assert s["wall_duration_ms"] is not None
     assert s["wall_duration_ms"] > 0
+
+
+def test_non_string_timestamp_does_not_abort_the_session(tmp_path):
+    """A non-string timestamp must not raise.
+
+    The ordering comparisons that track first/last timestamp would fail on
+    mixed int/str, and scanner treats any parse error as fatal to that whole
+    file — so one bad line would cost the entire session's stats.
+    """
+    p = tmp_path / "s.jsonl"
+    lines = [
+        {"type": "user", "promptId": "p1", "sessionId": "s",
+         "message": {"role": "user", "content": "hi"},
+         "timestamp": "2026-05-10T10:00:00Z"},
+        # Bad line: epoch number rather than an ISO string.
+        {"type": "user", "promptId": "p2", "sessionId": "s",
+         "message": {"role": "user", "content": "second"},
+         "timestamp": 1749551400},
+        {"type": "assistant", "sessionId": "s",
+         "message": {"model": "claude-sonnet-4-6", "role": "assistant",
+                     "usage": {"input_tokens": 1, "output_tokens": 1}, "content": []},
+         "timestamp": "2026-05-10T10:00:30Z"},
+    ]
+    p.write_text("\n".join(json.dumps(o) for o in lines))
+
+    s = parse_file(p)
+    # The session still parses; the bad line simply contributes no timestamp.
+    assert s["started_at"] == "2026-05-10T10:00:00Z"
+    assert s["ended_at"] == "2026-05-10T10:00:30Z"
+    assert s["wall_duration_ms"] == 30000
+    assert s["user_rounds"] == 2  # the bad line is still a real user round
