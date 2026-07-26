@@ -15,20 +15,21 @@ Runs the local scanner, then writes:
 """
 
 from __future__ import annotations
+
 import hashlib
 import json
 import os
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from claude_dashboard.store import Store
 from claude_dashboard.scanner import refresh
+from claude_dashboard.store import Store
 
 DB_PATH     = ROOT / "data" / "usage.db"
 STATIC_IN   = ROOT / "src" / "claude_dashboard" / "static"
@@ -84,7 +85,7 @@ def main() -> None:
             if detail:
                 _write(sessions_dir / f"{sid}.json", _redact(_strip_private(detail)))
 
-        _write(DATA_OUT / "meta.json", {"updated_at": datetime.now(timezone.utc).isoformat()})
+        _write(DATA_OUT / "meta.json", {"updated_at": datetime.now(UTC).isoformat()})
 
         print(f"Data: {len(sessions)} sessions, {len(projects)} projects")
 

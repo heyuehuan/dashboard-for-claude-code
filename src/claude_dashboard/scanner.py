@@ -1,12 +1,12 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from claude_dashboard.parser import parse_file, merge_stats
+from claude_dashboard.parser import merge_stats, parse_file
 from claude_dashboard.pricing import estimate_cost
 from claude_dashboard.store import Store
-
 
 _CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 
@@ -88,7 +88,11 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
                             str(sub_path), session_id,
                             sub_stat.st_mtime, sub_stat.st_size
                         )
-                    except Exception as e:
+                    # Blind catch is deliberate: this is a per-file error
+                    # boundary. One unparseable subagent transcript must not
+                    # abort the whole scan, and the failure is surfaced on the
+                    # report rather than swallowed.
+                    except Exception as e:  # noqa: BLE001
                         report.errors.append(f"{sub_path}: {e}")
 
                 # Estimate cost
@@ -107,7 +111,9 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
             except FileNotFoundError:
                 # Deleted mid-scan; the stale DB entry is handled by prune.
                 continue
-            except Exception as e:
+            # Blind catch is deliberate, as above — a single bad transcript is
+            # reported and skipped, not fatal to the scan.
+            except Exception as e:  # noqa: BLE001
                 report.errors.append(f"{jsonl_path}: {e}")
 
     if prune:
@@ -121,8 +127,7 @@ def _decode_project_path(encoded: str) -> str:
     # Strip a single leading dash, then replace remaining dashes with slashes.
     # This is a heuristic — consecutive dashes in real path segments would break it,
     # but Claude Code itself uses the same encoding scheme.
-    if encoded.startswith("-"):
-        encoded = encoded[1:]
+    encoded = encoded.removeprefix("-")
     return "/" + encoded.replace("-", "/")
 
 

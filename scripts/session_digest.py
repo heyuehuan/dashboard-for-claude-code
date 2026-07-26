@@ -12,6 +12,7 @@ Prints up to N (default 8) sessions missing a summary, most recent first.
 Each digest is delimited so it's easy to read and attribute back to a session_id.
 """
 from __future__ import annotations
+
 import json
 import os
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
-from claude_dashboard.store import Store  # noqa: E402
+from claude_dashboard.store import Store
 
 DB = Path(os.environ.get("DASHBOARD_DB") or ROOT / "data" / "usage.db")
 
@@ -53,10 +54,16 @@ def _text_of(content) -> str | None:
     return None
 
 
+_NOISE_PREFIXES = (
+    "<local-command-caveat",
+    "<command-name",
+    "<system-reminder",
+    "Caveat:",
+)
+
+
 def _is_noise(text: str) -> bool:
-    s = text.lstrip()
-    return s.startswith("<local-command-caveat") or s.startswith("<command-name") \
-        or s.startswith("<system-reminder") or s.startswith("Caveat:")
+    return text.lstrip().startswith(_NOISE_PREFIXES)
 
 
 def extract(path: str) -> dict:
@@ -64,31 +71,32 @@ def extract(path: str) -> dict:
     first_user_any = None    # fallback: first non-noise user text of any shape
     last_assistant = None
     compact = None
-    for line in open(path, encoding="utf-8", errors="replace"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        msg = o.get("message") or {}
-        if o.get("isCompactSummary"):
-            compact = _text_of(msg.get("content"))
-            continue
-        t = o.get("type")
-        if t == "user":
-            txt = _text_of(msg.get("content"))
-            if not txt or _is_noise(txt) or "tool_result" in str(msg.get("content"))[:40]:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
                 continue
-            if first_user_any is None:
-                first_user_any = txt
-            if first_prompt is None and o.get("promptId") and isinstance(msg.get("content"), str):
-                first_prompt = txt
-        elif t == "assistant":
-            txt = _text_of(msg.get("content"))
-            if txt and txt.strip():
-                last_assistant = txt
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = o.get("message") or {}
+            if o.get("isCompactSummary"):
+                compact = _text_of(msg.get("content"))
+                continue
+            t = o.get("type")
+            if t == "user":
+                txt = _text_of(msg.get("content"))
+                if not txt or _is_noise(txt) or "tool_result" in str(msg.get("content"))[:40]:
+                    continue
+                if first_user_any is None:
+                    first_user_any = txt
+                if first_prompt is None and o.get("promptId") and isinstance(msg.get("content"), str):
+                    first_prompt = txt
+            elif t == "assistant":
+                txt = _text_of(msg.get("content"))
+                if txt and txt.strip():
+                    last_assistant = txt
     return {
         "first_prompt": first_prompt or first_user_any,
         "last_assistant": last_assistant,
@@ -125,7 +133,7 @@ def main():
         try:
             tools = json.loads(d.get("tools_json") or "{}")
         # Best-effort parse; an empty tools dict is an acceptable fallback.
-        except Exception:  # nosec B110
+        except (TypeError, ValueError):
             pass
         top_tools = ", ".join(
             f"{k}×{v}" for k, v in sorted(tools.items(), key=lambda x: -x[1])[:6]

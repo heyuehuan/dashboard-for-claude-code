@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import json
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -494,7 +494,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         if key in d:
             try:
                 d[out_key] = json.loads(d[key]) if d[key] else {}
-            except Exception:
+            except (TypeError, ValueError):
                 d[out_key] = {}
             del d[key]
     return d
@@ -517,7 +517,7 @@ def _aggregate_activity(con: sqlite3.Connection) -> dict[str, list[dict]]:
         try:
             obj = json.loads(r["j"] or "{}")
         # Best-effort parse; skip malformed rows.
-        except Exception:  # nosec B112
+        except (TypeError, ValueError):
             continue
         for c in cats:
             for k, v in (obj.get(c) or {}).items():
@@ -543,7 +543,7 @@ def _aggregate_json_counts(con: sqlite3.Connection, column: str) -> dict[str, in
         try:
             obj = json.loads(r["j"] or "{}")
         # Best-effort parse; skip malformed rows.
-        except Exception:  # nosec B112
+        except (TypeError, ValueError):
             continue
         for k, v in obj.items():
             merged[k] = merged.get(k, 0) + (v or 0)
@@ -561,7 +561,7 @@ def _merge_token_tool_rows(rows) -> tuple[dict, dict]:
     for r in rows:
         try:
             tok = json.loads(r["tokens_json"] or "{}")
-        except Exception:
+        except (TypeError, ValueError):
             tok = {}
         for model, counts in tok.items():
             if model not in merged_tok:
@@ -571,7 +571,7 @@ def _merge_token_tool_rows(rows) -> tuple[dict, dict]:
                 merged_tok[model][k] = merged_tok[model].get(k, 0) + (v or 0)
         try:
             tools = json.loads(r["tools_json"] or "{}")
-        except Exception:
+        except (TypeError, ValueError):
             tools = {}
         for name, cnt in tools.items():
             merged_tools[name] = merged_tools.get(name, 0) + (cnt or 0)

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+
 from claude_dashboard.parser import parse_file
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tiny_session.jsonl"

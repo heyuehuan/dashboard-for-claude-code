@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -119,12 +120,14 @@ def parse_file(path: str | Path) -> dict[str, Any]:
         try:
             # fromisoformat tolerates timestamps with or without fractional
             # seconds; strptime with a fixed "%...%fZ" format would silently
-            # drop the duration for any timestamp lacking microseconds.
-            t0 = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
-            t1 = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+            # drop the duration for any timestamp lacking microseconds. It also
+            # parses a trailing "Z" natively on the 3.11+ we require.
+            t0 = datetime.fromisoformat(first_ts)
+            t1 = datetime.fromisoformat(last_ts)
             stats["wall_duration_ms"] = int((t1 - t0).total_seconds() * 1000)
-        # Best-effort duration; skip when timestamps are unparseable.
-        except Exception:  # nosec B110
+        # Best-effort duration; skip when timestamps are malformed (ValueError)
+        # or not strings at all (TypeError).
+        except (TypeError, ValueError):
             pass
 
     return stats
@@ -161,8 +164,8 @@ def _bucket_activity(stats: dict, ts: str, ltype: str, line: dict):
       turns   – user prompts + assistant replies (conversation turns)
       prompts – real user prompts only (promptId + string content)."""
     try:
-        lt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
-    except Exception:
+        lt = datetime.fromisoformat(ts).astimezone()
+    except (TypeError, ValueError):
         return
     key = f"{(lt.weekday() + 1) % 7}-{lt.hour}"  # %w convention: 0=Sun..6=Sat
     act = stats["activity"]

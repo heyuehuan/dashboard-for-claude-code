@@ -157,7 +157,7 @@ def test_daily_series(tmp_path):
 
 # ── Session summaries (read from session_summary.json, not the DB) ──────────
 
-import json  # noqa: E402
+import json
 
 
 def _write_summaries(store, mapping):
