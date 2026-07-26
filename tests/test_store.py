@@ -203,3 +203,62 @@ def test_sessions_missing_summary_excludes_summarized(tmp_path):
     _write_summaries(store, {"A": "done"})
     missing = {s["session_id"] for s in store.sessions_missing_summary()}
     assert missing == {"B", "C"}  # A has a summary now
+
+
+def _corrupt(store, session_id, **cols):
+    """Write raw column values, bypassing upsert_session's json.dumps."""
+    assigns = ", ".join(f"{c} = ?" for c in cols)
+    store._con.execute(
+        f"UPDATE sessions SET {assigns} WHERE session_id = ?",  # nosec
+        (*cols.values(), session_id),
+    )
+    store._con.commit()
+
+
+def test_summary_survives_malformed_cache_columns(tmp_path):
+    """One unusable cache row must not blank the whole dashboard.
+
+    The dangerous shapes are the ones that parse as valid JSON but are not
+    objects ('123', 'null', '[1]', '"str"') — they survive json.loads and only
+    blow up later at .items()/.get(), inside aggregates that every summary
+    request runs.
+    """
+    store = _store(tmp_path)
+    _corrupt(
+        store, "B",
+        tokens_json="123",              # valid JSON, not an object
+        tools_json="[1]",               # valid JSON, wrong container
+        activity_json="null",           # parses to None
+        skills_json='"str"',            # parses to str
+        permission_modes_json="{bad",   # does not parse at all
+    )
+
+    s = store.summary()
+
+    # Session B drops out of every aggregate; A and C are still exact.
+    assert set(s["tokens_by_model"]) == {"claude-sonnet-4-6", "claude-opus-4-8"}
+    assert s["tools"]["Bash"] == 7          # 2 from A + 5 from C, B's 1 dropped
+    assert s["skills"] == {"code-review": 1}
+    assert s["permission_modes"] == {"default": 4}  # B's acceptEdits dropped
+    cells = {(a["dow"], a["hour"]): a["count"] for a in s["activity"]["all"]}
+    assert cells == {(1, 9): 4}             # only A's cells survive
+    # Row-level reads degrade to empty dicts rather than raising.
+    assert store.get_session("B")["tokens_by_model"] == {}
+    assert store.get_session("B")["activity"] == {}
+
+
+def test_aggregates_ignore_non_numeric_counter_values(tmp_path):
+    """A stray non-numeric value inside an otherwise valid object is skipped
+    rather than raising mid-aggregation."""
+    store = _store(tmp_path)
+    _corrupt(
+        store, "B",
+        tools_json='{"Bash": "lots", "Read": 3}',
+        tokens_json='{"claude-haiku-4-5": {"input": "many", "output": 5}}',
+    )
+
+    s = store.summary()
+    assert s["tools"]["Bash"] == 7          # A's 2 + C's 5; B's "lots" counts 0
+    assert s["tools"]["Read"] == 3          # the good sibling key still counts
+    assert s["tokens_by_model"]["claude-haiku-4-5"]["input"] == 0
+    assert s["tokens_by_model"]["claude-haiku-4-5"]["output"] == 5

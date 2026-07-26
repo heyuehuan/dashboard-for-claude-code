@@ -480,6 +480,38 @@ class Store:
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
+def _as_obj(v: Any) -> dict:
+    """Coerce an already-parsed value to a mapping; anything else becomes {}."""
+    return v if isinstance(v, dict) else {}
+
+
+def _loads_obj(raw: Any) -> dict:
+    """Parse a JSON-object cache column, degrading to {} on anything unusable.
+
+    Every caller iterates the result as a mapping, so this guards both halves
+    of "unusable": text that will not parse, and text that parses cleanly but
+    is not an object (`123`, `null`, `[1]`). The second case is the dangerous
+    one — it survives json.loads and only fails later at `.items()`, which
+    would take down a whole dashboard aggregate over one bad row. Cache rows
+    are written by this package, but an upstream transcript-shape change or a
+    hand-edited DB can still produce them.
+    """
+    try:
+        obj = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return _as_obj(obj)
+
+
+def _num(v: Any) -> float:
+    """Coerce a counter value to a number; non-numeric entries count as zero.
+
+    Same reasoning as _loads_obj: a stray string value inside an otherwise
+    valid object should not raise mid-aggregation.
+    """
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     json_cols = {
@@ -492,10 +524,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     }
     for key, out_key in json_cols.items():
         if key in d:
-            try:
-                d[out_key] = json.loads(d[key]) if d[key] else {}
-            except (TypeError, ValueError):
-                d[out_key] = {}
+            d[out_key] = _loads_obj(d[key])
             del d[key]
     return d
 
@@ -514,14 +543,10 @@ def _aggregate_activity(con: sqlite3.Connection) -> dict[str, list[dict]]:
     cats = ("all", "turns", "prompts")
     merged: dict[str, dict[str, int]] = {c: {} for c in cats}
     for r in con.execute("SELECT activity_json AS j FROM sessions"):
-        try:
-            obj = json.loads(r["j"] or "{}")
-        # Best-effort parse; skip malformed rows.
-        except (TypeError, ValueError):
-            continue
+        obj = _loads_obj(r["j"])
         for c in cats:
-            for k, v in (obj.get(c) or {}).items():
-                merged[c][k] = merged[c].get(k, 0) + (v or 0)
+            for k, v in _as_obj(obj.get(c)).items():
+                merged[c][k] = merged[c].get(k, 0) + _num(v)
     out: dict[str, list[dict]] = {}
     for c in cats:
         rows = []
@@ -540,13 +565,8 @@ def _aggregate_json_counts(con: sqlite3.Connection, column: str) -> dict[str, in
     merged: dict[str, int] = {}
     # column is an internal literal (permission_modes_json/skills_json), never user input.
     for r in con.execute(f"SELECT {column} AS j FROM sessions"):  # nosec
-        try:
-            obj = json.loads(r["j"] or "{}")
-        # Best-effort parse; skip malformed rows.
-        except (TypeError, ValueError):
-            continue
-        for k, v in obj.items():
-            merged[k] = merged.get(k, 0) + (v or 0)
+        for k, v in _loads_obj(r["j"]).items():
+            merged[k] = merged.get(k, 0) + _num(v)
     return merged
 
 
@@ -559,20 +579,13 @@ def _merge_token_tool_rows(rows) -> tuple[dict, dict]:
     merged_tok: dict[str, dict] = {}
     merged_tools: dict[str, int] = {}
     for r in rows:
-        try:
-            tok = json.loads(r["tokens_json"] or "{}")
-        except (TypeError, ValueError):
-            tok = {}
-        for model, counts in tok.items():
+        for model, counts in _loads_obj(r["tokens_json"]).items():
             if model not in merged_tok:
                 merged_tok[model] = {"input": 0, "output": 0, "cache_read": 0,
                                      "cache_write_5m": 0, "cache_write_1h": 0}
-            for k, v in counts.items():
-                merged_tok[model][k] = merged_tok[model].get(k, 0) + (v or 0)
-        try:
-            tools = json.loads(r["tools_json"] or "{}")
-        except (TypeError, ValueError):
-            tools = {}
-        for name, cnt in tools.items():
-            merged_tools[name] = merged_tools.get(name, 0) + (cnt or 0)
+            # counts is per-model and nested, so it needs its own shape guard.
+            for k, v in _as_obj(counts).items():
+                merged_tok[model][k] = merged_tok[model].get(k, 0) + _num(v)
+        for name, cnt in _loads_obj(r["tools_json"]).items():
+            merged_tools[name] = merged_tools.get(name, 0) + _num(cnt)
     return merged_tok, merged_tools
