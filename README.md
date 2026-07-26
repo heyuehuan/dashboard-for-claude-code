@@ -1,8 +1,8 @@
-# Claude Code Personal Analytics
+# Claude Code Dashboard for Personal Analytics
 
 ![Banner](docs/banner.jpeg)
 
-**See how you actually use [Claude Code](https://docs.claude.com/en/docs/claude-code).** A private, local analytics dashboard for your sessions, costs, tools, skills, coding patterns — and wasted effort.
+**See how you actually use [Claude Code](https://docs.claude.com/en/docs/claude-code).** A private, local analytics dashboard for your sessions, costs, tokens, tools, skills, coding patterns — and wasted effort.
 
 > Your Claude Code usage tells a story. This dashboard makes it visible.
 

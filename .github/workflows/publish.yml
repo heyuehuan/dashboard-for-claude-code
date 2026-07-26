@@ -1,0 +1,100 @@
+name: Publish
+
+# Publishes to PyPI via Trusted Publishing (OIDC) — no API token is stored.
+# The pending publisher registered on PyPI must match this file's name
+# (publish.yml), the environment below (pypi), and this repository.
+#
+# To cut a release: bump `version` in pyproject.toml, merge to main, then
+#   git tag v0.1.0 && git push origin v0.1.0
+# PyPI versions are immutable — a tag can never be republished.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # Re-run the full test matrix against the exact tagged commit. CI on main is
+  # not enough: the tag is what ships, and an unpublishable build is far cheaper
+  # to catch here than after a version number is permanently burned.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }} --group dev
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} --group dev pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # A tag that disagrees with pyproject.toml would publish a version nobody
+      # asked for, under a number that can never be reused. Fail before building.
+      - name: Check tag matches pyproject version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          project="$(uv version --short)"
+          if [ "$tag" != "$project" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version '$tag' but pyproject.toml declares '$project'."
+            exit 1
+          fi
+          echo "Publishing version $project"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify artifact metadata
+        run: uvx twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Must match the environment name on the PyPI pending publisher. Also a
+    # useful place to hang a required reviewer if you ever want manual sign-off.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dashboard-for-claude-code
+
+    # id-token lets the runner mint the short-lived OIDC token PyPI trades for
+    # an upload grant. This is the whole reason no secret needs to exist.
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
