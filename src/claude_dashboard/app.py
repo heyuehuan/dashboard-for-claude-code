@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import hmac
 import logging
 import os
@@ -11,8 +12,8 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from claude_dashboard.scanner import RefreshReport, refresh
 from claude_dashboard.store import Store
-from claude_dashboard.scanner import refresh, RefreshReport
 
 _log = logging.getLogger("claude_dashboard")
 

@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Allow running as a plain script (python scripts/demo_data.py) as well as -m.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from claude_dashboard.pricing import estimate_cost  # noqa: E402
-from claude_dashboard.store import Store  # noqa: E402
+from claude_dashboard.pricing import estimate_cost
+from claude_dashboard.store import Store
 
 # Fictional projects — nothing here maps to a real user or repository.
 _PROJECTS = [
@@ -112,7 +112,7 @@ def _bucket(activity: dict, dow: int, hour: int, msgs: int, turns: int, prompts:
 def build(store: Store, *, seed: int = 7, n_sessions: int = 60, days: int = 35) -> None:
     # Non-crypto RNG: seeded only for reproducible synthetic demo data.
     rng = random.Random(seed)  # nosec B311
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for i in range(n_sessions):
         name, path, weight = rng.choices(

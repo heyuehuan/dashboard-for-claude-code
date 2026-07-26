@@ -40,7 +40,10 @@ def _load(path: Path) -> dict:
 
 
 def main():
-    raw = open(sys.argv[1]).read() if len(sys.argv) > 1 else sys.stdin.read()
+    if len(sys.argv) > 1:
+        raw = Path(sys.argv[1]).read_text()
+    else:
+        raw = sys.stdin.read()
     incoming = json.loads(raw)
 
     summaries = _load(SUMMARY_FILE)

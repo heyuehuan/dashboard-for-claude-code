@@ -4,6 +4,7 @@ https://platform.claude.com/docs/en/about-claude/pricing.
 This is the *equivalent* API cost, not what the user paid (they use a subscription).
 """
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 
