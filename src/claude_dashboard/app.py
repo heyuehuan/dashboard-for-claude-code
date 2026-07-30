@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from claude_dashboard.parser import EMPTY_TOKENS
 from claude_dashboard.scanner import RefreshReport, refresh
 from claude_dashboard.store import Store
 
@@ -171,11 +172,9 @@ def api_project(path: str = Query(None), name: str = Query(None)):
         ).replace("\xff", "") or None
         # merge tokens_by_model
         for model, counts in (p.get("tokens_by_model") or {}).items():
-            if model not in base["tokens_by_model"]:
-                base["tokens_by_model"][model] = {"input": 0, "output": 0, "cache_read": 0,
-                                                   "cache_write_5m": 0, "cache_write_1h": 0}
+            bucket = base["tokens_by_model"].setdefault(model, dict(EMPTY_TOKENS))
             for k, v in counts.items():
-                base["tokens_by_model"][model][k] = base["tokens_by_model"][model].get(k, 0) + (v or 0)
+                bucket[k] = bucket.get(k, 0) + (v or 0)
         for tool, cnt in (p.get("tools") or {}).items():
             base["tools"][tool] = base["tools"].get(tool, 0) + cnt
     base["sessions"] = _store.list_sessions_for_paths(all_paths)

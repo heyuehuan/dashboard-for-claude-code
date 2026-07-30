@@ -95,3 +95,53 @@ def test_prune_removes_sessions_with_deleted_transcripts(projects_dir, store):
     assert report.pruned == 1
     assert store.get_session("test-session-001") is None
     assert store.get_file(str(path)) is None
+
+
+def test_rate_change_reprices_unchanged_sessions(projects_dir, store, monkeypatch):
+    """An edit to the pricing table must re-price sessions already in the DB. The
+    mtime/size cache would otherwise skip them and keep serving the old cost_usd."""
+    _add_session(projects_dir)
+    scanner.refresh(store)
+    before = store.get_session("test-session-001")["cost_usd"]
+
+    # Same file on disk, but the rate table now fingerprints differently.
+    monkeypatch.setattr(scanner, "rate_revision", lambda: "deadbeefdeadbeef")
+    monkeypatch.setattr(
+        scanner, "estimate_cost", lambda tokens: {"by_model": {}, "total": 99.0, "unknown_models": []}
+    )
+
+    report = scanner.refresh(store)
+    assert (report.updated, report.skipped) == (1, 0)
+    assert store.get_session("test-session-001")["cost_usd"] == 99.0
+    assert before != 99.0
+
+    # The revision is recorded, so the next scan goes back to skipping.
+    report = scanner.refresh(store)
+    assert (report.updated, report.skipped) == (0, 1)
+
+
+def test_rate_revision_not_recorded_when_scan_errors(projects_dir, store, monkeypatch):
+    """A scan that hit an error left some sessions on their old cost, so the revision
+    must stay unrecorded and the re-price must be retried on the next refresh."""
+    _add_session(projects_dir)
+    scanner.refresh(store)
+
+    monkeypatch.setattr(scanner, "rate_revision", lambda: "deadbeefdeadbeef")
+    _add_session(projects_dir, name="test-session-002.jsonl")
+
+    real_parse = scanner.parse_file
+
+    def parse_file(path):
+        if Path(path).name == "test-session-002.jsonl":
+            raise ValueError("unreadable")
+        return real_parse(path)
+
+    monkeypatch.setattr(scanner, "parse_file", parse_file)
+
+    report = scanner.refresh(store)
+    assert report.errors  # the bad transcript was reported, not fatal
+    monkeypatch.setattr(scanner, "parse_file", real_parse)
+
+    # Revision unrecorded → everything is re-parsed again rather than skipped.
+    report = scanner.refresh(store)
+    assert report.skipped == 0

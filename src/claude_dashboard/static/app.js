@@ -52,8 +52,8 @@ function dataUrl(path) {
 
 applyTheme(localStorage.getItem("theme") || "light");
 
-// Claude Code bills 1h cache writes at the 5m rate (1.25x input), not the API-published
-// 2x rate, so cache_write_1h == cache_write_5m here. Keep in sync with pricing.py.
+// Keep in sync with _RATES in pricing.py — test_js_rate_table_matches_python
+// fails if the two drift. Rates are per MTok; 1h cache writes bill at 2x input.
 const MODEL_RATES = [
   [
     "fable-5",
@@ -62,7 +62,27 @@ const MODEL_RATES = [
       output: 50.0,
       cache_read: 1.0,
       cache_write_5m: 12.5,
-      cache_write_1h: 12.5,
+      cache_write_1h: 20.0,
+    },
+  ],
+  [
+    "mythos-5",
+    {
+      input: 10.0,
+      output: 50.0,
+      cache_read: 1.0,
+      cache_write_5m: 12.5,
+      cache_write_1h: 20.0,
+    },
+  ],
+  [
+    "opus-5",
+    {
+      input: 5.0,
+      output: 25.0,
+      cache_read: 0.5,
+      cache_write_5m: 6.25,
+      cache_write_1h: 10.0,
     },
   ],
   [
@@ -72,7 +92,7 @@ const MODEL_RATES = [
       output: 25.0,
       cache_read: 0.5,
       cache_write_5m: 6.25,
-      cache_write_1h: 6.25,
+      cache_write_1h: 10.0,
     },
   ],
   [
@@ -82,7 +102,7 @@ const MODEL_RATES = [
       output: 25.0,
       cache_read: 0.5,
       cache_write_5m: 6.25,
-      cache_write_1h: 6.25,
+      cache_write_1h: 10.0,
     },
   ],
   [
@@ -92,7 +112,7 @@ const MODEL_RATES = [
       output: 25.0,
       cache_read: 0.5,
       cache_write_5m: 6.25,
-      cache_write_1h: 6.25,
+      cache_write_1h: 10.0,
     },
   ],
   [
@@ -102,7 +122,7 @@ const MODEL_RATES = [
       output: 25.0,
       cache_read: 0.5,
       cache_write_5m: 6.25,
-      cache_write_1h: 6.25,
+      cache_write_1h: 10.0,
     },
   ],
   [
@@ -112,17 +132,17 @@ const MODEL_RATES = [
       output: 75.0,
       cache_read: 1.5,
       cache_write_5m: 18.75,
-      cache_write_1h: 18.75,
+      cache_write_1h: 30.0,
     },
   ],
   [
-    "opus-4",
+    "opus-4-2025",
     {
       input: 15.0,
       output: 75.0,
       cache_read: 1.5,
       cache_write_5m: 18.75,
-      cache_write_1h: 18.75,
+      cache_write_1h: 30.0,
     },
   ],
   [
@@ -132,7 +152,7 @@ const MODEL_RATES = [
       output: 15.0,
       cache_read: 0.3,
       cache_write_5m: 3.75,
-      cache_write_1h: 3.75,
+      cache_write_1h: 6.0,
     },
   ],
   [
@@ -142,7 +162,7 @@ const MODEL_RATES = [
       output: 15.0,
       cache_read: 0.3,
       cache_write_5m: 3.75,
-      cache_write_1h: 3.75,
+      cache_write_1h: 6.0,
     },
   ],
   [
@@ -152,7 +172,7 @@ const MODEL_RATES = [
       output: 15.0,
       cache_read: 0.3,
       cache_write_5m: 3.75,
-      cache_write_1h: 3.75,
+      cache_write_1h: 6.0,
     },
   ],
   [
@@ -162,7 +182,7 @@ const MODEL_RATES = [
       output: 15.0,
       cache_read: 0.3,
       cache_write_5m: 3.75,
-      cache_write_1h: 3.75,
+      cache_write_1h: 6.0,
     },
   ],
   [
@@ -172,7 +192,7 @@ const MODEL_RATES = [
       output: 15.0,
       cache_read: 0.3,
       cache_write_5m: 3.75,
-      cache_write_1h: 3.75,
+      cache_write_1h: 6.0,
     },
   ],
   [
@@ -182,7 +202,7 @@ const MODEL_RATES = [
       output: 5.0,
       cache_read: 0.1,
       cache_write_5m: 1.25,
-      cache_write_1h: 1.25,
+      cache_write_1h: 2.0,
     },
   ],
   [
@@ -192,7 +212,7 @@ const MODEL_RATES = [
       output: 4.0,
       cache_read: 0.08,
       cache_write_5m: 1.0,
-      cache_write_1h: 1.0,
+      cache_write_1h: 1.6,
     },
   ],
 ];
@@ -2682,6 +2702,7 @@ function shortModel(m) {
   if (!m) return "?";
   m = m.toLowerCase();
   if (m.includes("fable-5")) return "Fable 5";
+  if (m.includes("opus-5")) return "Opus 5";
   if (m.includes("opus-4-8")) return "Opus 4.8";
   if (m.includes("opus-4-7")) return "Opus 4.7";
   if (m.includes("opus-4-6")) return "Opus 4.6";
@@ -2697,7 +2718,24 @@ function shortModel(m) {
   if (m === "sonnet") return "Sonnet";
   if (m === "opus") return "Opus";
   if (m === "haiku") return "Haiku";
-  return m.slice(0, 12);
+  // A model released after this list was written: derive a name from the id
+  // ("claude-opus-6-20260901" -> "Opus 6") instead of truncating it mid-word,
+  // which is how claude-opus-5 showed up as "claude-opus-" before it was added.
+  const parts = m.replace(/^claude-/, "").split("-");
+  const family = parts.shift();
+  const version = [];
+  for (const p of parts) {
+    if (!/^\d{1,2}$/.test(p)) break; // stop at a date suffix like 20260901
+    version.push(p);
+  }
+  // An id that doesn't look like "<family>-<version>" (no family, or a family too
+  // long to be a badge) still gets the old truncation rather than a runaway label.
+  if (!family || family.length > 12) return m.slice(0, 12);
+  return (
+    family.charAt(0).toUpperCase() +
+    family.slice(1) +
+    (version.length ? " " + version.join(".") : "")
+  );
 }
 function modelClass(m) {
   m = (m || "").toLowerCase();
