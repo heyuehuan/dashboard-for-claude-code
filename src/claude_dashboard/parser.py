@@ -26,6 +26,11 @@ def parse_file(path: str | Path) -> dict[str, Any]:
         "started_at": None,
         "ended_at": None,
         "wall_duration_ms": None,
+        # Sum of the CLI's `turn_duration` records: wall time per turn, including tool
+        # execution and time spent waiting on background agents — not API time. It is
+        # also main-thread only: subagent transcripts carry no turn_duration lines, so
+        # this reads well below the CLI's own "Total duration (API)" on sessions that
+        # delegate. Treat as "time the session was working", not as billed API time.
         "api_duration_ms": 0,
         "user_rounds": 0,
         "assistant_messages": 0,
@@ -44,11 +49,13 @@ def parse_file(path: str | Path) -> dict[str, Any]:
         "skills_used": {},
         "tokens_by_model": {},
         "tools": {},
-        "_req_prev": {},
     }
 
     first_ts: str | None = None
     last_ts: str | None = None
+    # requestId -> last-seen usage/tools for that API call; local so it never leaks
+    # into the returned stats (and from there into the DB row).
+    req_prev: dict[str, dict] = {}
 
     with open(path, encoding="utf-8", errors="replace") as fh:
         for raw in fh:
@@ -104,7 +111,7 @@ def parse_file(path: str | Path) -> dict[str, Any]:
                 _handle_user(line, stats)
 
             elif ltype == "assistant":
-                _handle_assistant(line, stats)
+                _handle_assistant(line, stats, req_prev)
 
             elif ltype == "system":
                 _handle_system(line, stats)
@@ -224,7 +231,7 @@ def _handle_tool_result(tur: dict, stats: dict):
         stats["tasks_completed"] += 1
 
 
-def _handle_assistant(line: dict, stats: dict):
+def _handle_assistant(line: dict, stats: dict, req_prev: dict):
     msg = line.get("message", {})
     if line.get("isApiErrorMessage"):
         stats["error_count"] += 1
@@ -247,25 +254,26 @@ def _handle_assistant(line: dict, stats: dict):
     if model and model != "<synthetic>":
         request_id = line.get("requestId")
         if request_id:
-            # The JSONL records each API call multiple times (different UUIDs, same
-            # requestId). Streaming events duplicate with incomplete output_tokens;
-            # the last entry has the final values. Roll back the previous
-            # accumulation (tokens AND tool_use counts) so we always end up with
-            # the last-seen values for each API call — otherwise a tool_use that
-            # appears in N duplicate entries gets counted N times.
-            prev = stats["_req_prev"].get(request_id)
+            # One API call is written to the JSONL as several lines (one per content
+            # block, each with its own uuid but the same requestId). They repeat the
+            # same usage object except for output_tokens, which starts at a small
+            # placeholder and only reaches its final value on the last line. So we
+            # roll back the previous accumulation for this requestId — tokens AND
+            # tool_use counts — leaving last-entry-wins. Summing every line instead
+            # inflates output tokens ~3x and counts each tool_use once per line.
+            prev = req_prev.get(request_id)
             if prev:
-                _subtract_tokens(stats["tokens_by_model"], prev["model"], prev["usage"])
+                _apply_tokens(stats["tokens_by_model"], prev["model"], prev["usage"], -1)
                 for name, cnt in (prev.get("tools") or {}).items():
                     stats["tools"][name] = stats["tools"].get(name, 0) - cnt
             else:
                 stats["assistant_messages"] += 1
-            stats["_req_prev"][request_id] = {
+            req_prev[request_id] = {
                 "model": model, "usage": usage, "tools": line_tools,
             }
         else:
             stats["assistant_messages"] += 1
-        _accumulate_tokens(stats["tokens_by_model"], model, usage)
+        _apply_tokens(stats["tokens_by_model"], model, usage)
 
     # Apply this line's tool counts. For lines with a requestId we rolled back any
     # earlier duplicate above, so this yields last-entry-wins per API call.
@@ -278,42 +286,40 @@ def _handle_system(line: dict, stats: dict):
         stats["api_duration_ms"] += line.get("durationMs", 0)
 
 
-def _subtract_tokens(tokens_by_model: dict, model: str, usage: dict):
-    if model not in tokens_by_model:
+EMPTY_TOKENS = {
+    "input": 0, "output": 0, "cache_read": 0,
+    "cache_write_5m": 0, "cache_write_1h": 0,
+}
+"""The five token buckets, zeroed. Every module that merges tokens_by_model starts
+from this so the bucket set can only ever change in one place."""
+
+
+def _usage_buckets(usage: dict) -> dict[str, int]:
+    """Map one API `usage` object onto our five token buckets."""
+    # cache_creation breakdown: prefer the ephemeral sub-keys, fall back to the total.
+    # If both sub-keys are 0 but cache_creation_input_tokens is set, bill it as a 5m
+    # write — the cheaper of the two, so an unknown TTL never inflates the estimate.
+    cc = usage.get("cache_creation") or {}
+    write_5m = cc.get("ephemeral_5m_input_tokens", 0) or 0
+    write_1h = cc.get("ephemeral_1h_input_tokens", 0) or 0
+    if write_5m == 0 and write_1h == 0:
+        write_5m = usage.get("cache_creation_input_tokens", 0) or 0
+    return {
+        "input": usage.get("input_tokens", 0) or 0,
+        "output": usage.get("output_tokens", 0) or 0,
+        "cache_read": usage.get("cache_read_input_tokens", 0) or 0,
+        "cache_write_5m": write_5m,
+        "cache_write_1h": write_1h,
+    }
+
+
+def _apply_tokens(tokens_by_model: dict, model: str, usage: dict, sign: int = 1):
+    """Add (sign=1) or roll back (sign=-1) one usage object for `model`."""
+    if sign < 0 and model not in tokens_by_model:
         return
-    t = tokens_by_model[model]
-    t["input"]         -= usage.get("input_tokens", 0) or 0
-    t["output"]        -= usage.get("output_tokens", 0) or 0
-    t["cache_read"]    -= usage.get("cache_read_input_tokens", 0) or 0
-    cc = usage.get("cache_creation") or {}
-    write_5m = cc.get("ephemeral_5m_input_tokens", 0) or 0
-    write_1h = cc.get("ephemeral_1h_input_tokens", 0) or 0
-    if write_5m == 0 and write_1h == 0:
-        write_5m = usage.get("cache_creation_input_tokens", 0) or 0
-    t["cache_write_5m"] -= write_5m
-    t["cache_write_1h"] -= write_1h
-
-
-def _accumulate_tokens(tokens_by_model: dict, model: str, usage: dict):
-    if model not in tokens_by_model:
-        tokens_by_model[model] = {
-            "input": 0, "output": 0, "cache_read": 0,
-            "cache_write_5m": 0, "cache_write_1h": 0,
-        }
-    t = tokens_by_model[model]
-    t["input"]  += usage.get("input_tokens", 0) or 0
-    t["output"] += usage.get("output_tokens", 0) or 0
-    t["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
-
-    # cache_creation breakdown: prefer ephemeral sub-keys, fall back to total
-    cc = usage.get("cache_creation") or {}
-    write_5m = cc.get("ephemeral_5m_input_tokens", 0) or 0
-    write_1h = cc.get("ephemeral_1h_input_tokens", 0) or 0
-    # If sub-keys are both 0 but cache_creation_input_tokens is set, put in 5m bucket
-    if write_5m == 0 and write_1h == 0:
-        write_5m = usage.get("cache_creation_input_tokens", 0) or 0
-    t["cache_write_5m"] += write_5m
-    t["cache_write_1h"] += write_1h
+    t = tokens_by_model.setdefault(model, dict(EMPTY_TOKENS))
+    for bucket, value in _usage_buckets(usage).items():
+        t[bucket] += sign * value
 
 
 def merge_stats(base: dict, extra: dict) -> dict:
@@ -346,13 +352,9 @@ def merge_stats(base: dict, extra: dict) -> dict:
 
     # Merge tokens
     for model, counts in (extra.get("tokens_by_model") or {}).items():
-        if model not in base["tokens_by_model"]:
-            base["tokens_by_model"][model] = {
-                "input": 0, "output": 0, "cache_read": 0,
-                "cache_write_5m": 0, "cache_write_1h": 0,
-            }
+        t = base["tokens_by_model"].setdefault(model, dict(EMPTY_TOKENS))
         for k, v in counts.items():
-            base["tokens_by_model"][model][k] = base["tokens_by_model"][model].get(k, 0) + (v or 0)
+            t[k] = t.get(k, 0) + (v or 0)
 
     # Merge tools
     for name, cnt in (extra.get("tools") or {}).items():

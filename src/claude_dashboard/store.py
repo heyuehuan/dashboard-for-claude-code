@@ -6,7 +6,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+from claude_dashboard.parser import EMPTY_TOKENS
+
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS files (
     path      TEXT    PRIMARY KEY,
     mtime     REAL    NOT NULL,
@@ -126,6 +133,18 @@ class Store:
         self._con.commit()
 
     # ── file tracking ──────────────────────────────────────────────────────
+
+    def get_meta(self, key: str) -> str | None:
+        row = self._con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str):
+        self._con.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self._con.commit()
 
     def get_file(self, path: str) -> sqlite3.Row | None:
         return self._con.execute(
@@ -580,12 +599,10 @@ def _merge_token_tool_rows(rows) -> tuple[dict, dict]:
     merged_tools: dict[str, int] = {}
     for r in rows:
         for model, counts in _loads_obj(r["tokens_json"]).items():
-            if model not in merged_tok:
-                merged_tok[model] = {"input": 0, "output": 0, "cache_read": 0,
-                                     "cache_write_5m": 0, "cache_write_1h": 0}
+            bucket = merged_tok.setdefault(model, dict(EMPTY_TOKENS))
             # counts is per-model and nested, so it needs its own shape guard.
             for k, v in _as_obj(counts).items():
-                merged_tok[model][k] = merged_tok[model].get(k, 0) + _num(v)
+                bucket[k] = bucket.get(k, 0) + _num(v)
         for name, cnt in _loads_obj(r["tools_json"]).items():
             merged_tools[name] = merged_tools.get(name, 0) + _num(cnt)
     return merged_tok, merged_tools

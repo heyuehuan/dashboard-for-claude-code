@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from claude_dashboard.parser import merge_stats, parse_file
-from claude_dashboard.pricing import estimate_cost
+from claude_dashboard.pricing import estimate_cost, rate_revision
 from claude_dashboard.store import Store
 
 _CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+_RATE_REVISION_KEY = "pricing_rate_revision"
 
 
 @dataclass
@@ -32,6 +33,12 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
 
     if not _CLAUDE_PROJECTS.exists():
         return report
+
+    # Stored cost_usd was computed with whatever rates were in effect at parse time.
+    # If the rate table has changed since, the mtime/size cache would keep serving
+    # those stale numbers forever — so re-parse everything once after a rate edit.
+    revision = rate_revision()
+    reprice_all = store.get_meta(_RATE_REVISION_KEY) != revision
 
     for project_dir in sorted(_CLAUDE_PROJECTS.iterdir()):
         if not project_dir.is_dir():
@@ -60,7 +67,7 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
                 subagent_paths = _find_subagents(jsonl_path)
 
                 cached = store.get_file(str(jsonl_path))
-                if cached and cached["mtime"] == mtime and cached["size"] == size:
+                if not reprice_all and cached and cached["mtime"] == mtime and cached["size"] == size:
                     # Check if subagents changed
                     if not _subagents_changed(store, subagent_paths):
                         report.skipped += 1
@@ -95,10 +102,10 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
                     except Exception as e:  # noqa: BLE001
                         report.errors.append(f"{sub_path}: {e}")
 
-                # Estimate cost
-                cost_result = estimate_cost(stats.get("tokens_by_model", {}))
-                stats["cost_usd"] = cost_result.get("total", 0.0)
-                stats.pop("_req_prev", None)
+                # Equivalent API cost. Runs below what `/cost` reports, because the
+                # CLI bills side requests it never writes to the transcript — see the
+                # module docstring in pricing.py.
+                stats["cost_usd"] = estimate_cost(stats.get("tokens_by_model", {}))["total"]
 
                 store.upsert_session(stats)
                 store.upsert_file(str(jsonl_path), stats["session_id"], mtime, size)
@@ -118,6 +125,11 @@ def refresh(store: Store, prune: bool = False) -> RefreshReport:
 
     if prune:
         report.pruned = _prune_missing(store)
+
+    # Only once the whole scan is clean. If a session errored out it kept its old
+    # cost, so leaving the revision unrecorded makes the next refresh try again.
+    if not report.errors:
+        store.set_meta(_RATE_REVISION_KEY, revision)
 
     return report
 
