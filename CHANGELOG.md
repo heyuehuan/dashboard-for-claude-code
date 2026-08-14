@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.1] — 2026-08-14
+
+### Fixed
+- Opus 5 had no rate row, so its sessions priced at $0 and surfaced under
+  unknown models. Model display names now derive from the id instead of a
+  12-character slice, so `claude-opus-5` renders as "Opus 5" rather than
+  "claude-opus-" — and the next model degrades to a name, not a truncation.
+- 1h cache writes bill at 2× input, not the 5m rate (1.25×). Every model row
+  was understating cost on sessions with 1h cache creation. Stored costs are
+  computed at parse time and the mtime/size cache would have served the old
+  numbers forever, so the scanner now fingerprints the rate table and
+  re-prices every session once after a rate edit.
+- The browser-side rate table in `static/app.js` (used for client-side pricing
+  in remote mode) had drifted from `pricing.py`: it was missing the mythos-5
+  row and used a bare `opus-4` key, which would price future Opus models at the
+  legacy 3× rate. A test now fails if the two tables disagree.
+- CI pinned `astral-sh/setup-uv@v7`, a tag that can never advance: setup-uv
+  stopped publishing floating major tags after v7, so Dependabot resolved the
+  latest ref as 7 and silently never proposed an upgrade. All workflows now pin
+  the action by commit SHA (v10.0.1), which Dependabot can track.
+
+### Changed
+- `estimate_cost` returns per-model costs under a `by_model` key instead of
+  mixing them into the top-level dict alongside `total` and `unknown_models`.
+
 ## [0.1.0] — 2026-07-08
 
 ### Added

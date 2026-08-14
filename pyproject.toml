@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dashboard-for-claude-code"
-version = "0.1.0"
+version = "0.1.1"
 description = "Claude Code Personal Analytics — a private, local, read-only analytics dashboard for your Claude Code sessions: costs, tokens, tools, skills, coding patterns, and wasted effort."
 readme = "README.md"
 requires-python = ">=3.11"
